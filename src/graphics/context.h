@@ -22,13 +22,15 @@ namespace vulcao::graphics {
         
 
         private:
-            static vk::raii::Instance make_instance(const vk::raii::Context& context,
-                                                   const std::string& appName,
-                                                   uint32_t appVersion);
-             
+            vk::raii::Instance make_instance(const vk::raii::Context& context,
+                                                   const std::string& app_name,
+                                                   uint32_t app_version);
+            vk::raii::Device make_device();
             vk::raii::Context context_;
             vk::raii::Instance instance_;
             vk::raii::PhysicalDevices physical_devices_;
+            vk::raii::PhysicalDevice physical_device_;
+            vk::raii::Device device_;
 
     };
 }
