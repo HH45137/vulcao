@@ -19,9 +19,8 @@ namespace vulcao::graphics {
         return vk::raii::Instance(context, createInfo);
     }
     vk::raii::Device Context::make_device(){
-        inquiry_physical_devices_info();
+        inquery_physical_devices_info();
         std::cout<<"------------------- devices info -------------------"<<std::endl;
-        uint32_t graphics_queue_family_index = 1.0;
         std::vector<vk::QueueFamilyProperties> queue_family_properties = physical_device_.getQueueFamilyProperties();
         
         std::cout << "number of queue families: " << queue_family_properties.size() << std::endl;
@@ -31,23 +30,42 @@ namespace vulcao::graphics {
         }
         for (uint32_t i = 0; i < queue_family_properties.size(); i++) {
              if (queue_family_properties[i].queueFlags & vk::QueueFlagBits::eGraphics) {
-                graphics_queue_family_index = i;
-                std::cout << "use graphics queue family index: " << graphics_queue_family_index << std::endl;
+                graphics_queue_family_index_ = i;
+                std::cout << "use graphics queue family index: " << graphics_queue_family_index_ << std::endl;
                 break;
             }
         }
 
         float queuePriority = 1.0f;
 
-        vk::DeviceQueueCreateInfo deviceQueueCreateInfo{};
-        deviceQueueCreateInfo.queueFamilyIndex = graphics_queue_family_index;
-        deviceQueueCreateInfo.queueCount       = 1;
-        deviceQueueCreateInfo.pQueuePriorities = &queuePriority;
+        vk::DeviceQueueCreateInfo device_queue_create_info{};
+        device_queue_create_info.queueFamilyIndex = graphics_queue_family_index_;
+        device_queue_create_info.queueCount       = 1;
+        device_queue_create_info.pQueuePriorities = &queuePriority;
 
-        vk::DeviceCreateInfo      deviceCreateInfo( {}, deviceQueueCreateInfo );
+        vk::DeviceCreateInfo deviceCreateInfo{
+            .queueCreateInfoCount = 1,
+            .pQueueCreateInfos    = &device_queue_create_info,
+        };
         return vk::raii::Device(physical_device_, deviceCreateInfo);
     }
-    void Context::inquiry_physical_devices_info(){
+    vk::raii::CommandPool Context::make_command_pool(){
+        vk::CommandPoolCreateInfo command_pool_create_info{};
+        command_pool_create_info.flags = {};
+        command_pool_create_info.queueFamilyIndex = graphics_queue_family_index_;
+
+        return vk::raii::CommandPool(device_, command_pool_create_info);
+    }
+    vk::raii::CommandBuffer Context::make_command_buffer(){
+        vk::CommandBufferAllocateInfo commandBufferAllocateInfo{
+            .commandPool        = command_pool_,
+            .level              = vk::CommandBufferLevel::ePrimary,
+            .commandBufferCount = 1,
+        };
+        vk::raii::CommandBuffer       commandBuffer = std::move( vk::raii::CommandBuffers( device_, commandBufferAllocateInfo ).front() );
+        return commandBuffer;
+    }
+    void Context::inquery_physical_devices_info(){
         std::cout<<"------------------- devices info -------------------"<<std::endl;
         if(physical_devices_.empty()){
             std::cerr << "not find physical device!!!!!!!\n";
@@ -112,7 +130,10 @@ namespace vulcao::graphics {
           instance_{make_instance(context_, appName, appVersion)},
           physical_devices_(instance_),
           physical_device_(physical_devices_.front()),
-          device_{make_device()}
+          device_{make_device()},
+          graphics_queue_{device_.getQueue(graphics_queue_family_index_, 0) },
+          command_pool_{make_command_pool()},
+          immediate_command_buffer_{ make_command_buffer() }
     {}
           
 }
