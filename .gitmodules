@@ -13,3 +13,6 @@
 [submodule "third_party/spirv-reflect"]
 	path = third_party/spirv-reflect
 	url = https://github.com/KhronosGroup/SPIRV-Reflect
+[submodule "third_party/doctest"]
+	path = third_party/doctest
+	url = https://github.com/doctest/doctest
