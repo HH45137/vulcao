@@ -1,8 +1,10 @@
-#include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <filesystem>
 #include <iostream>
+#include <span>
 #include <stdexcept>
 #include <vector>
 
@@ -11,13 +13,28 @@
 #include <vulkan/vulkan.hpp>
 
 #include "vulcao/buffer.h"
+#include "vulcao/command_buffer.h"
 #include "vulcao/context.h"
-#include "vulcao/fence.h"
-#include "vulcao/image.h"
-#include "vulcao/query_pool.h"
+#include "vulcao/descriptor_set.h"
+#include "vulcao/pipeline.h"
+#include "vulcao/pipeline_layout.h"
 #include "vulcao/semaphore.h"
+#include "vulcao/shader_module.h"
+
+#ifndef VULCAO_SHADER_DIR
+#define VULCAO_SHADER_DIR "shaders"
+#endif
 
 namespace {
+
+std::filesystem::path shader_path(const char* name) {
+    return std::filesystem::path(VULCAO_SHADER_DIR) / name;
+}
+
+struct Vertex {
+    float position[3];
+    float color[3];
+};
 
 vk::SurfaceKHR create_surface(vk::Instance instance, GLFWwindow* window) {
     VkSurfaceKHR surface = VK_NULL_HANDLE;
@@ -33,7 +50,70 @@ vk::Extent2D framebuffer_extent(GLFWwindow* window) {
     return vk::Extent2D{static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
 }
 
-void record_clear(vulcao::CommandBuffer& cmd,
+void run_compute_test(vulcao::Context& ctx) {
+    constexpr uint32_t element_count = 64;
+    const vk::DeviceSize data_bytes = element_count * sizeof(uint32_t);
+
+    std::vector<uint32_t> initial(element_count);
+    for (uint32_t i = 0; i < element_count; ++i)
+        initial[i] = i;
+
+    vulcao::Buffer buffer = vulcao::Buffer::create(
+        ctx.allocator(), data_bytes,
+        vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc |
+            vk::BufferUsageFlagBits::eTransferDst);
+    ctx.upload(buffer, initial);
+
+    vulcao::ShaderModule shader = vulcao::ShaderModule::create_from_file(
+        ctx.device(), vk::ShaderStageFlagBits::eCompute, shader_path("reduce.comp.spv"));
+
+    const vulcao::ShaderReflection& reflection = shader.reflection();
+    std::cout << "compute reflection: " << reflection.sets.size() << " set(s), "
+              << reflection.bindings_for_set(0).size() << " binding(s)" << std::endl;
+
+    vulcao::PipelineLayout layout =
+        vulcao::PipelineLayout::create_from_reflection(ctx.device(), std::span(&reflection, 1));
+    vulcao::Pipeline pipeline =
+        vulcao::Pipeline::create_compute(ctx.device(), layout, shader, "compMain");
+
+    const vk::DescriptorPoolSize pool_size{
+        .type = vk::DescriptorType::eStorageBuffer,
+        .descriptorCount = 1,
+    };
+    vulcao::DescriptorPool pool = vulcao::DescriptorPool::create(ctx.device(), pool_size, 1);
+    vulcao::DescriptorSet set = pool.allocate(layout.set_layouts()[0]);
+    set.write_storage_buffer(0, buffer);
+
+    vulcao::Buffer readback = vulcao::Buffer::create(
+        ctx.allocator(), data_bytes, vk::BufferUsageFlagBits::eTransferDst,
+        VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+
+    vulcao::CommandBuffer cmd = vulcao::CommandBuffer::allocate(ctx.device(), ctx.command_pool());
+    const vk::DescriptorSet raw_set = set.handle();
+    cmd.begin();
+    cmd.bind_pipeline(vk::PipelineBindPoint::eCompute, pipeline.handle());
+    cmd.bind_descriptor_sets(vk::PipelineBindPoint::eCompute, layout.handle(), raw_set);
+    cmd.dispatch(element_count / 64);
+    cmd.buffer_barrier(buffer.handle(),
+                       vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite,
+                       vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+    cmd.copy_buffer(buffer.handle(), readback.handle(), data_bytes);
+    cmd.end();
+    ctx.submit_and_wait(cmd.handle());
+
+    readback.invalidate();
+    const auto* result = static_cast<const uint32_t*>(readback.map());
+    bool ok = true;
+    for (uint32_t i = 0; i < element_count; ++i)
+        ok = ok && result[i] == initial[i] * 2 + 1;
+    readback.unmap();
+
+    std::cout << "compute dispatch: " << (ok ? "ok" : "MISMATCH") << std::endl;
+}
+
+void record_frame(vulcao::CommandBuffer& cmd,
+                  const vulcao::Pipeline& pipeline,
+                  const vulcao::Buffer& vertex_buffer,
                   vk::Image image,
                   vk::ImageView view,
                   vk::Extent2D extent) {
@@ -71,15 +151,22 @@ void record_clear(vulcao::CommandBuffer& cmd,
     cmd.transition(image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal,
                    range);
     cmd.begin_rendering(rendering_info);
+    cmd.bind_pipeline(vk::PipelineBindPoint::eGraphics, pipeline.handle());
+    cmd.set_viewport(extent);
+    cmd.set_scissor(extent);
+    cmd.bind_vertex_buffer(0, vertex_buffer);
+    cmd.draw(3);
     cmd.end_rendering();
     cmd.transition(image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR,
                    range);
     cmd.end();
 }
 
-void render_clear_frame(vulcao::Context& ctx,
-                        const vulcao::Semaphore& image_available,
-                        const vulcao::Semaphore& render_finished) {
+void render_frame(vulcao::Context& ctx,
+                  const vulcao::Pipeline& pipeline,
+                  const vulcao::Buffer& vertex_buffer,
+                  const vulcao::Semaphore& image_available,
+                  const vulcao::Semaphore& render_finished) {
     vk::Device device = ctx.device();
     vk::SwapchainKHR swapchain = ctx.swapchain();
     vulcao::CommandBuffer& cmd = ctx.immediate_command_buffer();
@@ -87,7 +174,7 @@ void render_clear_frame(vulcao::Context& ctx,
     uint32_t image_index =
         device.acquireNextImageKHR(swapchain, UINT64_MAX, image_available.handle()).value;
 
-    record_clear(cmd, ctx.swapchain_images()[image_index],
+    record_frame(cmd, pipeline, vertex_buffer, ctx.swapchain_images()[image_index],
                  ctx.swapchain_image_views()[image_index], ctx.swapchain_extent());
 
     const vk::Semaphore wait_semaphore = image_available.handle();
@@ -104,7 +191,7 @@ void render_clear_frame(vulcao::Context& ctx,
         .pSignalSemaphores = &signal_semaphore,
     });
 
-    vk::Result present_result = ctx.present_queue().presentKHR(vk::PresentInfoKHR{
+    const vk::Result present_result = ctx.present_queue().presentKHR(vk::PresentInfoKHR{
         .waitSemaphoreCount = 1,
         .pWaitSemaphores = &signal_semaphore,
         .swapchainCount = 1,
@@ -135,140 +222,67 @@ int main() {
         vulcao::Context ctx{"vulcao-game"};
         ctx.initialize(create_surface(ctx.instance(), window), framebuffer_extent(window));
 
-        const std::vector<uint32_t> vertex_data{0, 1, 2, 3, 4, 5};
-        const vk::DeviceSize vertex_bytes = vertex_data.size() * sizeof(uint32_t);
+        run_compute_test(ctx);
 
-        vulcao::Buffer vertex_buffer = vulcao::Buffer::create(
-            ctx.allocator(), vertex_bytes,
-            vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferSrc |
-                vk::BufferUsageFlagBits::eTransferDst);
-        ctx.upload(vertex_buffer, vertex_data);
+        vulcao::ShaderModule vertex_shader = vulcao::ShaderModule::create_from_file(
+            ctx.device(), vk::ShaderStageFlagBits::eVertex, shader_path("triangle.vert.spv"));
+        vulcao::ShaderModule fragment_shader = vulcao::ShaderModule::create_from_file(
+            ctx.device(), vk::ShaderStageFlagBits::eFragment, shader_path("triangle.frag.spv"));
 
-        vulcao::Buffer readback = vulcao::Buffer::create(
-            ctx.allocator(), vertex_bytes, vk::BufferUsageFlagBits::eTransferDst,
-            VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+        std::vector<vk::VertexInputAttributeDescription> attributes =
+            vertex_shader.reflection().vertex_attributes;
+        for (vk::VertexInputAttributeDescription& attribute : attributes) {
+            attribute.binding = 0;
+            attribute.offset = attribute.location == 0 ? offsetof(Vertex, position)
+                                                       : offsetof(Vertex, color);
+        }
+        std::cout << "vertex attributes from reflection: " << attributes.size() << std::endl;
 
-        vulcao::CommandBuffer update_cmd =
-            vulcao::CommandBuffer::allocate(ctx.device(), ctx.command_pool());
-        update_cmd.begin();
-        update_cmd.update_buffer(readback.handle(), 0, vertex_data);
-        update_cmd.end();
-        ctx.submit_and_wait(update_cmd.handle());
-
-        readback.invalidate();
-        bool data_ok = std::equal(vertex_data.begin(), vertex_data.end(),
-                                  static_cast<const uint32_t*>(readback.map()));
-        readback.unmap();
-        std::cout << "update_buffer: " << (data_ok ? "ok" : "MISMATCH") << std::endl;
-
-        vulcao::CommandBuffer secondary = vulcao::CommandBuffer::allocate(
-            ctx.device(), ctx.command_pool(), vk::CommandBufferLevel::eSecondary);
-        secondary.begin();
-        secondary.copy_buffer(vertex_buffer.handle(), readback.handle(), vertex_bytes);
-        secondary.end();
-
-        vulcao::QueryPool timestamps =
-            vulcao::QueryPool::create(ctx.device(), vk::QueryType::eTimestamp, 2);
-        vulcao::Buffer timing = vulcao::Buffer::create(
-            ctx.allocator(), 2 * sizeof(uint64_t), vk::BufferUsageFlagBits::eTransferDst,
-            VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
-
-        vulcao::CommandBuffer copy_cmd =
-            vulcao::CommandBuffer::allocate(ctx.device(), ctx.command_pool());
-        copy_cmd.begin();
-        copy_cmd.fill_buffer(readback.handle(), 0, vertex_bytes, 0);
-        copy_cmd.reset_query_pool(timestamps.handle(), 0, 2);
-        copy_cmd.write_timestamp(timestamps.handle(), vk::PipelineStageFlagBits2::eTopOfPipe, 0);
-        copy_cmd.buffer_barrier(vertex_buffer.handle(),
-                                vk::PipelineStageFlagBits2::eTransfer,
-                                vk::AccessFlagBits2::eTransferWrite,
-                                vk::PipelineStageFlagBits2::eTransfer,
-                                vk::AccessFlagBits2::eTransferRead);
-        copy_cmd.execute_commands(secondary.handle());
-        copy_cmd.write_timestamp(timestamps.handle(), vk::PipelineStageFlagBits2::eBottomOfPipe, 1);
-        copy_cmd.copy_query_pool_results(
-            timestamps.handle(), 0, 2, timing.handle(), 0, sizeof(uint64_t),
-            vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
-        copy_cmd.end();
-
-        vulcao::Fence copy_done = vulcao::Fence::create(ctx.device());
-        ctx.submit(copy_cmd.handle(), copy_done.handle());
-        std::cout << "copy submitted, doing CPU work while the GPU copies..." << std::endl;
-        copy_done.wait();
-
-        readback.invalidate();
-        data_ok = std::equal(vertex_data.begin(), vertex_data.end(),
-                             static_cast<const uint32_t*>(readback.map()));
-        readback.unmap();
-        std::cout << "fill + secondary + execute_commands: " << (data_ok ? "ok" : "MISMATCH")
-                  << std::endl;
-
-        timing.invalidate();
-        const auto* stamp = static_cast<const uint64_t*>(timing.map());
-        const float period = ctx.physical_device().getProperties().limits.timestampPeriod;
-        std::cout << "copy time: " << static_cast<double>(stamp[1] - stamp[0]) * period << " ns"
-                  << std::endl;
-        timing.unmap();
-
-        const std::array<uint8_t, 4> pixel{255, 128, 0, 255};
-        const vk::ImageCreateInfo image_info{
-            .imageType = vk::ImageType::e2D,
-            .format = vk::Format::eR8G8B8A8Unorm,
-            .extent = vk::Extent3D{1, 1, 1},
-            .mipLevels = 1,
-            .arrayLayers = 1,
-            .samples = vk::SampleCountFlagBits::e1,
-            .tiling = vk::ImageTiling::eOptimal,
-            .usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc |
-                     vk::ImageUsageFlagBits::eTransferDst,
-            .sharingMode = vk::SharingMode::eExclusive,
-            .initialLayout = vk::ImageLayout::eUndefined,
+        const vk::VertexInputBindingDescription vertex_binding{
+            .binding = 0,
+            .stride = sizeof(Vertex),
+            .inputRate = vk::VertexInputRate::eVertex,
         };
-        vulcao::Image image = vulcao::Image::create(ctx.allocator(), image_info);
-        ctx.upload(image, pixel);
 
-        const uint32_t clear_value = 0x11223344u;
-        vk::ClearColorValue clear_color{};
-        clear_color.float32[0] = 68.0f / 255.0f;
-        clear_color.float32[1] = 51.0f / 255.0f;
-        clear_color.float32[2] = 34.0f / 255.0f;
-        clear_color.float32[3] = 17.0f / 255.0f;
+        const vulcao::GraphicsPipelineInfo pipeline_info{
+            .vertex_shader = vertex_shader.handle(),
+            .fragment_shader = fragment_shader.handle(),
+            .vertex_entry = "vertMain",
+            .fragment_entry = "fragMain",
+            .vertex_bindings = {vertex_binding},
+            .vertex_attributes = attributes,
+            .color_formats = {ctx.swapchain_format()},
+        };
 
-        vulcao::Buffer pixel_readback = vulcao::Buffer::create(
-            ctx.allocator(), sizeof(uint32_t), vk::BufferUsageFlagBits::eTransferDst,
-            VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+        const std::array<vulcao::ShaderReflection, 2> stage_reflections{
+            vertex_shader.reflection(), fragment_shader.reflection()};
+        vulcao::PipelineLayout pipeline_layout =
+            vulcao::PipelineLayout::create_from_reflection(ctx.device(), stage_reflections);
+        vulcao::Pipeline pipeline =
+            vulcao::Pipeline::create_graphics(ctx.device(), pipeline_layout, pipeline_info);
 
-        vulcao::CommandBuffer clear_cmd =
-            vulcao::CommandBuffer::allocate(ctx.device(), ctx.command_pool());
-        clear_cmd.begin();
-        clear_cmd.transition(image, vk::ImageLayout::eTransferDstOptimal);
-        clear_cmd.clear_color_image(image, clear_color);
-        clear_cmd.transition(image, vk::ImageLayout::eTransferSrcOptimal);
-        clear_cmd.copy_image_to_buffer(pixel_readback.handle(), image);
-        clear_cmd.end();
-        ctx.submit_and_wait(clear_cmd.handle());
+        const std::array<Vertex, 3> vertices{{
+            {{0.0f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}},
+            {{0.5f, 0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}},
+            {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}},
+        }};
+        vulcao::Buffer vertex_buffer = vulcao::Buffer::create(
+            ctx.allocator(), sizeof(Vertex) * vertices.size(),
+            vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst);
+        ctx.upload(vertex_buffer, vertices);
 
-        pixel_readback.invalidate();
-        const uint32_t read_value = *static_cast<const uint32_t*>(pixel_readback.map());
-        pixel_readback.unmap();
-        const bool clear_ok = read_value == clear_value;
-        std::cout << "clear_color_image + copy_image_to_buffer: " << (clear_ok ? "ok" : "MISMATCH")
-                  << " (read 0x" << std::hex << read_value << ", expected 0x" << clear_value << std::dec
-                  << ")" << std::endl;
-
-        vk::Device device = ctx.device();
-        vulcao::Semaphore image_available = vulcao::Semaphore::create(device);
-        vulcao::Semaphore render_finished = vulcao::Semaphore::create(device);
+        vulcao::Semaphore image_available = vulcao::Semaphore::create(ctx.device());
+        vulcao::Semaphore render_finished = vulcao::Semaphore::create(ctx.device());
 
         auto redraw = [&]() {
             try {
-                render_clear_frame(ctx, image_available, render_finished);
+                render_frame(ctx, pipeline, vertex_buffer, image_available, render_finished);
             } catch (const vk::OutOfDateKHRError&) {
                 vk::Extent2D extent = framebuffer_extent(window);
                 if (extent.width == 0 || extent.height == 0)
                     return;
                 ctx.recreate_swapchain(extent);
-                render_clear_frame(ctx, image_available, render_finished);
+                render_frame(ctx, pipeline, vertex_buffer, image_available, render_finished);
             }
         };
 
@@ -294,7 +308,7 @@ int main() {
             }
         }
 
-        device.waitIdle();
+        ctx.device().waitIdle();
     } catch (const std::exception& e) {
         std::cerr << "fatal: " << e.what() << std::endl;
         glfwDestroyWindow(window);
