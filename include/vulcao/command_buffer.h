@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <ranges>
 #include <type_traits>
@@ -349,6 +350,65 @@ public:
     /// @param extent Width and height of the scissor.
     /// @return This command buffer.
     CommandBuffer& set_scissor(vk::Extent2D extent);
+
+    /// @brief Sets the cull mode (requires the matching dynamic state).
+    /// @param cull_mode Cull mode to set.
+    /// @return This command buffer.
+    CommandBuffer& set_cull_mode(vk::CullModeFlags cull_mode);
+
+    /// @brief Sets the front face (requires the matching dynamic state).
+    /// @param front_face Front face winding.
+    /// @return This command buffer.
+    CommandBuffer& set_front_face(vk::FrontFace front_face);
+
+    /// @brief Sets the depth bias (requires the matching dynamic state).
+    /// @param constant_factor Constant depth bias factor.
+    /// @param clamp Maximum depth bias.
+    /// @param slope_factor Slope depth bias factor.
+    /// @return This command buffer.
+    CommandBuffer& set_depth_bias(float constant_factor, float clamp, float slope_factor);
+
+    /// @brief Sets the blend constants (requires the matching dynamic state).
+    /// @param constants RGBA blend constants.
+    /// @return This command buffer.
+    CommandBuffer& set_blend_constants(const std::array<float, 4>& constants);
+
+    /// @brief Sets the stencil reference (requires the matching dynamic state).
+    /// @param face_mask Faces the reference applies to.
+    /// @param reference Reference value.
+    /// @return This command buffer.
+    CommandBuffer& set_stencil_reference(vk::StencilFaceFlags face_mask, uint32_t reference);
+
+    /// @brief Sets the depth bounds (requires the matching dynamic state).
+    /// @param min_depth_bounds Minimum depth bound.
+    /// @param max_depth_bounds Maximum depth bound.
+    /// @return This command buffer.
+    CommandBuffer& set_depth_bounds(float min_depth_bounds, float max_depth_bounds);
+
+    /// @brief Sets the line width (requires the matching dynamic state).
+    /// @param line_width Line width.
+    /// @return This command buffer.
+    CommandBuffer& set_line_width(float line_width);
+
+    /// @brief Sets the primitive topology (requires the matching dynamic state).
+    /// @param topology Topology to set.
+    /// @return This command buffer.
+    CommandBuffer& set_primitive_topology(vk::PrimitiveTopology topology);
+
+    /// @brief Enables or disables depth testing (requires the matching dynamic state).
+    /// @param enable True to enable depth testing.
+    /// @return This command buffer.
+    CommandBuffer& set_depth_test_enable(bool enable);
+
+    /// @brief Enables or disables depth writes (requires the matching dynamic state).
+    /// @param enable True to enable depth writes.
+    /// @return This command buffer.
+    CommandBuffer& set_depth_write_enable(bool enable);
+
+    /// @brief Sets the depth compare operation (requires the matching dynamic state).
+    /// @param compare_op Compare operation.
+    /// @return This command buffer.
+    CommandBuffer& set_depth_compare_op(vk::CompareOp compare_op);
 
     /// @brief Pushes raw constant data to the pipeline layout.
     /// @param layout Pipeline layout.

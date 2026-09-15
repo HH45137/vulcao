@@ -470,6 +470,62 @@ CommandBuffer& CommandBuffer::set_scissor(vk::Extent2D extent) {
     return set_scissor(vk::Rect2D{.offset = vk::Offset2D{0, 0}, .extent = extent});
 }
 
+CommandBuffer& CommandBuffer::set_cull_mode(vk::CullModeFlags cull_mode) {
+    cmd_.setCullMode(cull_mode);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::set_front_face(vk::FrontFace front_face) {
+    cmd_.setFrontFace(front_face);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::set_depth_bias(float constant_factor, float clamp, float slope_factor) {
+    cmd_.setDepthBias(constant_factor, clamp, slope_factor);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::set_blend_constants(const std::array<float, 4>& constants) {
+    cmd_.setBlendConstants(constants.data());
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::set_stencil_reference(vk::StencilFaceFlags face_mask,
+                                                    uint32_t reference) {
+    cmd_.setStencilReference(face_mask, reference);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::set_depth_bounds(float min_depth_bounds, float max_depth_bounds) {
+    cmd_.setDepthBounds(min_depth_bounds, max_depth_bounds);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::set_line_width(float line_width) {
+    cmd_.setLineWidth(line_width);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::set_primitive_topology(vk::PrimitiveTopology topology) {
+    cmd_.setPrimitiveTopology(topology);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::set_depth_test_enable(bool enable) {
+    cmd_.setDepthTestEnable(enable ? VK_TRUE : VK_FALSE);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::set_depth_write_enable(bool enable) {
+    cmd_.setDepthWriteEnable(enable ? VK_TRUE : VK_FALSE);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::set_depth_compare_op(vk::CompareOp compare_op) {
+    cmd_.setDepthCompareOp(compare_op);
+    return *this;
+}
+
 CommandBuffer& CommandBuffer::push_constants(vk::PipelineLayout layout,
                                              vk::ShaderStageFlags stages,
                                              uint32_t offset,

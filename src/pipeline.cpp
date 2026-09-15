@@ -1,6 +1,7 @@
 #include "vulcao/pipeline.h"
 
 #include "vulcao/check.h"
+#include "vulcao/pipeline_cache.h"
 #include "vulcao/pipeline_layout.h"
 #include "vulcao/shader_module.h"
 
@@ -32,21 +33,42 @@ Pipeline& Pipeline::operator=(Pipeline&& other) noexcept {
 Pipeline Pipeline::create_graphics(vk::Device device,
                                    const PipelineLayout& layout,
                                    const GraphicsPipelineInfo& info) {
+    return create_graphics_impl(device, {}, layout, info);
+}
+
+Pipeline Pipeline::create_graphics(vk::Device device,
+                                   const PipelineCache& cache,
+                                   const PipelineLayout& layout,
+                                   const GraphicsPipelineInfo& info) {
+    return create_graphics_impl(device, cache.handle(), layout, info);
+}
+
+Pipeline Pipeline::create_graphics_impl(vk::Device device,
+                                        vk::PipelineCache cache,
+                                        const PipelineLayout& layout,
+                                        const GraphicsPipelineInfo& info) {
     if (!layout.valid())
         throw std::runtime_error("Pipeline::create_graphics: invalid pipeline layout");
     if (!info.vertex_shader || !info.fragment_shader)
         throw std::runtime_error("Pipeline::create_graphics: missing shader module");
+
+    const vk::SpecializationInfo vertex_specialization =
+        info.vertex_specialization ? info.vertex_specialization->get() : vk::SpecializationInfo{};
+    const vk::SpecializationInfo fragment_specialization =
+        info.fragment_specialization ? info.fragment_specialization->get() : vk::SpecializationInfo{};
 
     const std::vector<vk::PipelineShaderStageCreateInfo> stages{
         vk::PipelineShaderStageCreateInfo{
             .stage = vk::ShaderStageFlagBits::eVertex,
             .module = info.vertex_shader,
             .pName = info.vertex_entry,
+            .pSpecializationInfo = info.vertex_specialization ? &vertex_specialization : nullptr,
         },
         vk::PipelineShaderStageCreateInfo{
             .stage = vk::ShaderStageFlagBits::eFragment,
             .module = info.fragment_shader,
             .pName = info.fragment_entry,
+            .pSpecializationInfo = info.fragment_specialization ? &fragment_specialization : nullptr,
         },
     };
 
@@ -71,6 +93,7 @@ Pipeline Pipeline::create_graphics(vk::Device device,
         .polygonMode = info.polygon_mode,
         .cullMode = info.cull_mode,
         .frontFace = info.front_face,
+        .depthBiasEnable = info.depth_bias_enable ? VK_TRUE : VK_FALSE,
         .lineWidth = 1.0f,
     };
 
@@ -83,6 +106,12 @@ Pipeline Pipeline::create_graphics(vk::Device device,
         .depthTestEnable = depth_enabled ? VK_TRUE : VK_FALSE,
         .depthWriteEnable = depth_enabled && info.depth_write ? VK_TRUE : VK_FALSE,
         .depthCompareOp = info.depth_compare,
+        .depthBoundsTestEnable = info.depth_bounds_test ? VK_TRUE : VK_FALSE,
+        .stencilTestEnable = info.stencil_test ? VK_TRUE : VK_FALSE,
+        .front = info.front_stencil,
+        .back = info.back_stencil,
+        .minDepthBounds = info.min_depth_bounds,
+        .maxDepthBounds = info.max_depth_bounds,
     };
 
     std::vector<vk::PipelineColorBlendAttachmentState> blend_attachments;
@@ -102,14 +131,16 @@ Pipeline Pipeline::create_graphics(vk::Device device,
     }
 
     const vk::PipelineColorBlendStateCreateInfo color_blend{
+        .logicOpEnable = info.logic_op_enable ? VK_TRUE : VK_FALSE,
+        .logicOp = info.logic_op,
         .attachmentCount = static_cast<uint32_t>(blend_attachments.size()),
         .pAttachments = blend_attachments.data(),
     };
 
-    const std::vector<vk::DynamicState> dynamic_states{
-        vk::DynamicState::eViewport,
-        vk::DynamicState::eScissor,
-    };
+    const std::vector<vk::DynamicState> dynamic_states =
+        info.dynamic_states.empty()
+            ? std::vector<vk::DynamicState>{vk::DynamicState::eViewport, vk::DynamicState::eScissor}
+            : info.dynamic_states;
     const vk::PipelineDynamicStateCreateInfo dynamic_state{
         .dynamicStateCount = static_cast<uint32_t>(dynamic_states.size()),
         .pDynamicStates = dynamic_states.data(),
@@ -139,7 +170,8 @@ Pipeline Pipeline::create_graphics(vk::Device device,
     Pipeline pipeline;
     pipeline.device_ = device;
     pipeline.bind_point_ = vk::PipelineBindPoint::eGraphics;
-    const vk::ResultValue<vk::Pipeline> result = device.createGraphicsPipeline({}, create_info);
+    const vk::ResultValue<vk::Pipeline> result =
+        device.createGraphicsPipeline(cache, create_info);
     check(result.result, "create graphics pipeline");
     pipeline.pipeline_ = result.value;
     return pipeline;
@@ -148,26 +180,48 @@ Pipeline Pipeline::create_graphics(vk::Device device,
 Pipeline Pipeline::create_compute(vk::Device device,
                                   const PipelineLayout& layout,
                                   const ShaderModule& shader,
-                                  const char* entry) {
+                                  const char* entry,
+                                  const SpecializationInfo* specialization) {
+    return create_compute_impl(device, {}, layout, shader, entry, specialization);
+}
+
+Pipeline Pipeline::create_compute(vk::Device device,
+                                  const PipelineCache& cache,
+                                  const PipelineLayout& layout,
+                                  const ShaderModule& shader,
+                                  const char* entry,
+                                  const SpecializationInfo* specialization) {
+    return create_compute_impl(device, cache.handle(), layout, shader, entry, specialization);
+}
+
+Pipeline Pipeline::create_compute_impl(vk::Device device,
+                                       vk::PipelineCache cache,
+                                       const PipelineLayout& layout,
+                                       const ShaderModule& shader,
+                                       const char* entry,
+                                       const SpecializationInfo* specialization) {
     if (!layout.valid())
         throw std::runtime_error("Pipeline::create_compute: invalid pipeline layout");
     if (!shader.valid())
         throw std::runtime_error("Pipeline::create_compute: invalid shader module");
 
-    const vk::PipelineShaderStageCreateInfo stage{
-        .stage = vk::ShaderStageFlagBits::eCompute,
-        .module = shader.handle(),
-        .pName = entry,
-    };
+    const vk::SpecializationInfo spec_info =
+        specialization ? specialization->get() : vk::SpecializationInfo{};
+
     const vk::ComputePipelineCreateInfo create_info{
-        .stage = stage,
+        .stage = vk::PipelineShaderStageCreateInfo{
+            .stage = vk::ShaderStageFlagBits::eCompute,
+            .module = shader.handle(),
+            .pName = entry,
+            .pSpecializationInfo = specialization ? &spec_info : nullptr,
+        },
         .layout = layout.handle(),
     };
 
     Pipeline pipeline;
     pipeline.device_ = device;
     pipeline.bind_point_ = vk::PipelineBindPoint::eCompute;
-    const vk::ResultValue<vk::Pipeline> result = device.createComputePipeline({}, create_info);
+    const vk::ResultValue<vk::Pipeline> result = device.createComputePipeline(cache, create_info);
     check(result.result, "create compute pipeline");
     pipeline.pipeline_ = result.value;
     return pipeline;
@@ -183,4 +237,3 @@ void Pipeline::destroy() {
 }
 
 }
-

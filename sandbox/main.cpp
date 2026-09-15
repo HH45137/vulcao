@@ -23,6 +23,7 @@
 #include "vulcao/descriptor_set.h"
 #include "vulcao/image.h"
 #include "vulcao/pipeline.h"
+#include "vulcao/pipeline_cache.h"
 #include "vulcao/pipeline_layout.h"
 #include "vulcao/sampler.h"
 #include "vulcao/semaphore.h"
@@ -217,6 +218,7 @@ void record_frame(vulcao::CommandBuffer& cmd,
     cmd.bind_descriptor_sets(vk::PipelineBindPoint::eGraphics, pipeline_layout.handle(), raw_set);
     cmd.set_viewport(extent);
     cmd.set_scissor(extent);
+    cmd.set_depth_compare_op(vk::CompareOp::eLess);
     cmd.push_constants(pipeline_layout.handle(), vk::ShaderStageFlagBits::eVertex, 0, transform);
     cmd.bind_vertex_buffer(0, vertex_buffer);
     cmd.bind_index_buffer(index_buffer, 0, vk::IndexType::eUint16);
@@ -348,12 +350,18 @@ int main() {
         std::cout << "vertex attributes from reflection: " << vertex_layout.attributes.size()
                   << std::endl;
 
+        vulcao::SpecializationInfo fragment_specialization;
+        fragment_specialization.map_constant(0, 0.85f);
+
         const vulcao::GraphicsPipelineInfo pipeline_info{
             .vertex_shader = vertex_shader.handle(),
             .fragment_shader = fragment_shader.handle(),
             .vertex_entry = "vertMain",
             .fragment_entry = "fragMain",
+            .fragment_specialization = &fragment_specialization,
             .depth_test = true,
+            .dynamic_states = {vk::DynamicState::eViewport, vk::DynamicState::eScissor,
+                               vk::DynamicState::eDepthCompareOp},
             .vertex_bindings = vertex_layout.bindings,
             .vertex_attributes = vertex_layout.attributes,
             .color_formats = {ctx.swapchain_format()},
@@ -366,8 +374,11 @@ int main() {
         vulcao::PipelineLayout pipeline_layout =
             vulcao::PipelineLayout::create_from_reflection(ctx.device(), layout_cache,
                                                            stage_reflections);
-        vulcao::Pipeline pipeline =
-            vulcao::Pipeline::create_graphics(ctx.device(), pipeline_layout, pipeline_info);
+        vulcao::PipelineCache pipeline_cache = vulcao::PipelineCache::create(ctx.device());
+        vulcao::Pipeline pipeline = vulcao::Pipeline::create_graphics(
+            ctx.device(), pipeline_cache, pipeline_layout, pipeline_info);
+        std::cout << "pipeline cache size: " << pipeline_cache.data().size() << " bytes"
+                  << std::endl;
 
         const vk::DescriptorPoolSize descriptor_pool_size{
             .type = vk::DescriptorType::eCombinedImageSampler,

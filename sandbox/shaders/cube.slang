@@ -27,8 +27,11 @@ VSOut vertMain([[vk::location(0)]] float3 position : POSITION,
 
 [[vk::binding(0, 0)]] Sampler2D tex;
 
+[SpecializationConstant]
+const float tint = 1.0;
+
 [shader("fragment")]
 float4 fragMain([[vk::location(0)]] float2 uv) : SV_Target
 {
-    return tex.Sample(uv);
+    return tex.Sample(uv) * tint;
 }
