@@ -13,6 +13,7 @@
 #include "vulcao/allocator.h"
 #include "vulcao/command_buffer.h"
 #include "vulcao/fence.h"
+#include "vulcao/semaphore.h"
 
 namespace vulcao {
 
@@ -133,6 +134,18 @@ public:
     /// @param info Submission parameters.
     /// @param fence Optional fence signaled when the submission completes.
     void submit(vk::Queue queue, const vk::SubmitInfo& info, vk::Fence fence = {});
+
+    /// @brief Submits a command buffer that signals a timeline semaphore on completion.
+    /// @param queue Queue to submit to.
+    /// @param cmd Command buffer to submit.
+    /// @param timeline_semaphore Timeline semaphore signaled by the submission.
+    /// @param signal_value Value the semaphore is signaled with.
+    /// @param fence Optional fence signaled when the submission completes.
+    void submit(vk::Queue queue,
+                vk::CommandBuffer cmd,
+                const Semaphore& timeline_semaphore,
+                uint64_t signal_value,
+                vk::Fence fence = {});
 
     /// @brief Records one-time commands with the internal command buffer, submits and waits.
     /// @param fn Callable that records commands, invoked with a CommandBuffer reference.

@@ -316,6 +316,27 @@ void Context::submit(vk::Queue queue, const vk::SubmitInfo& info, vk::Fence fenc
     queue.submit(info, fence);
 }
 
+void Context::submit(vk::Queue queue,
+                     vk::CommandBuffer cmd,
+                     const Semaphore& timeline_semaphore,
+                     uint64_t signal_value,
+                     vk::Fence fence) {
+    const vk::TimelineSemaphoreSubmitInfo timeline_info{
+        .signalSemaphoreValueCount = 1,
+        .pSignalSemaphoreValues = &signal_value,
+    };
+    const vk::Semaphore semaphore = timeline_semaphore.handle();
+
+    queue.submit(vk::SubmitInfo{
+                     .pNext = &timeline_info,
+                     .commandBufferCount = 1,
+                     .pCommandBuffers = &cmd,
+                     .signalSemaphoreCount = 1,
+                     .pSignalSemaphores = &semaphore,
+                 },
+                 fence);
+}
+
 void Context::submit(vk::CommandBuffer cmd, vk::Fence fence) {
     submit(vk::SubmitInfo{
                .commandBufferCount = 1,

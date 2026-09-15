@@ -44,6 +44,14 @@ public:
     /// @param timeout Timeout in nanoseconds, or UINT64_MAX to wait forever.
     void wait(uint64_t timeout = UINT64_MAX) const;
 
+    /// @brief Waits until the fence is signaled or the timeout expires.
+    /// @param timeout Timeout in nanoseconds, or UINT64_MAX to wait forever.
+    /// @return True if the fence is signaled, false on timeout.
+    bool wait_for(uint64_t timeout) const;
+
+    /// @brief Returns true if the fence is currently signaled.
+    bool signaled() const;
+
     /// @brief Resets the fence to the unsignaled state.
     void reset() const;
 

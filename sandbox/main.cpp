@@ -134,7 +134,14 @@ void run_compute_test(vulcao::Context& ctx) {
                        vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
     cmd.copy_buffer(buffer.handle(), readback.handle(), data_bytes);
     cmd.end();
-    ctx.submit_and_wait(cmd.handle());
+
+    vulcao::Semaphore timeline = vulcao::Semaphore::create_timeline(ctx.device());
+    ctx.submit(ctx.graphics_queue(), cmd.handle(), timeline, 1);
+    timeline.wait(1);
+    std::cout << "timeline semaphore value: " << timeline.value() << std::endl;
+
+    timeline.signal(2);
+    timeline.wait(2);
 
     readback.invalidate();
     const auto* result = static_cast<const uint32_t*>(readback.map());
@@ -295,6 +302,7 @@ int main() {
 
     try {
         vulcao::Context ctx{{.app_name = "vulcao-game",
+                             .device_features = {.timeline_semaphore = true},
                              .separate_compute_queue = true,
                              .separate_transfer_queue = true,
                              .log = [](vulcao::LogLevel, std::string_view message) {

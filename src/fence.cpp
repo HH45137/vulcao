@@ -2,6 +2,8 @@
 
 #include "vulcao/check.h"
 
+#include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace vulcao {
@@ -32,6 +34,19 @@ Fence Fence::create(vk::Device device, vk::FenceCreateFlags flags) {
 
 void Fence::wait(uint64_t timeout) const {
     check(device_.waitForFences(fence_, VK_TRUE, timeout), "wait for fence");
+}
+
+bool Fence::wait_for(uint64_t timeout) const {
+    const vk::Result result = device_.waitForFences(fence_, VK_TRUE, timeout);
+    if (result == vk::Result::eSuccess)
+        return true;
+    if (result == vk::Result::eTimeout)
+        return false;
+    throw std::runtime_error("Fence::wait_for failed: " + vk::to_string(result));
+}
+
+bool Fence::signaled() const {
+    return device_.getFenceStatus(fence_) == vk::Result::eSuccess;
 }
 
 void Fence::reset() const {
