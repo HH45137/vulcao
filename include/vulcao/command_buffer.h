@@ -35,10 +35,12 @@ public:
     /// @param device Device that owns the pool.
     /// @param pool Pool to allocate from.
     /// @param level Command buffer level.
+    /// @param debug_utils True to enable debug labels on this command buffer.
     /// @return The allocated command buffer.
     static CommandBuffer allocate(vk::Device device,
                                   vk::CommandPool pool,
-                                  vk::CommandBufferLevel level = vk::CommandBufferLevel::ePrimary);
+                                  vk::CommandBufferLevel level = vk::CommandBufferLevel::ePrimary,
+                                  bool debug_utils = false);
 
     /// @brief Returns true if the command buffer holds a valid handle.
     bool valid() const { return static_cast<bool>(cmd_); }
@@ -75,6 +77,22 @@ public:
     /// @brief Stops recording.
     /// @return This command buffer.
     CommandBuffer& end();
+
+    /// @brief Begins a debug label region. No-op unless debug labels were enabled.
+    /// @param name Label name.
+    /// @param color Label color.
+    /// @return This command buffer.
+    CommandBuffer& begin_debug_label(const char* name, const std::array<float, 4>& color = {});
+
+    /// @brief Ends the current debug label region.
+    /// @return This command buffer.
+    CommandBuffer& end_debug_label();
+
+    /// @brief Inserts a single debug label. No-op unless debug labels were enabled.
+    /// @param name Label name.
+    /// @param color Label color.
+    /// @return This command buffer.
+    CommandBuffer& insert_debug_label(const char* name, const std::array<float, 4>& color = {});
 
     /// @brief Inserts a global memory barrier.
     /// @param src_stage Source pipeline stages.
@@ -566,6 +584,9 @@ private:
     vk::CommandPool pool_;
     vk::CommandBuffer cmd_;
     vk::CommandBufferLevel level_ = vk::CommandBufferLevel::ePrimary;
+    PFN_vkCmdBeginDebugUtilsLabelEXT begin_label_ext_ = nullptr;
+    PFN_vkCmdEndDebugUtilsLabelEXT end_label_ext_ = nullptr;
+    PFN_vkCmdInsertDebugUtilsLabelEXT insert_label_ext_ = nullptr;
 };
 
 }

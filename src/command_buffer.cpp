@@ -70,7 +70,10 @@ CommandBuffer::CommandBuffer(CommandBuffer&& other) noexcept
     : device_(std::exchange(other.device_, vk::Device{})),
       pool_(std::exchange(other.pool_, vk::CommandPool{})),
       cmd_(std::exchange(other.cmd_, vk::CommandBuffer{})),
-      level_(std::exchange(other.level_, vk::CommandBufferLevel::ePrimary)) {}
+      level_(std::exchange(other.level_, vk::CommandBufferLevel::ePrimary)),
+      begin_label_ext_(std::exchange(other.begin_label_ext_, nullptr)),
+      end_label_ext_(std::exchange(other.end_label_ext_, nullptr)),
+      insert_label_ext_(std::exchange(other.insert_label_ext_, nullptr)) {}
 
 CommandBuffer& CommandBuffer::operator=(CommandBuffer&& other) noexcept {
     if (this != &other) {
@@ -79,17 +82,29 @@ CommandBuffer& CommandBuffer::operator=(CommandBuffer&& other) noexcept {
         pool_ = std::exchange(other.pool_, vk::CommandPool{});
         cmd_ = std::exchange(other.cmd_, vk::CommandBuffer{});
         level_ = std::exchange(other.level_, vk::CommandBufferLevel::ePrimary);
+        begin_label_ext_ = std::exchange(other.begin_label_ext_, nullptr);
+        end_label_ext_ = std::exchange(other.end_label_ext_, nullptr);
+        insert_label_ext_ = std::exchange(other.insert_label_ext_, nullptr);
     }
     return *this;
 }
 
 CommandBuffer CommandBuffer::allocate(vk::Device device,
                                       vk::CommandPool pool,
-                                      vk::CommandBufferLevel level) {
+                                      vk::CommandBufferLevel level,
+                                      bool debug_utils) {
     CommandBuffer command_buffer;
     command_buffer.device_ = device;
     command_buffer.pool_ = pool;
     command_buffer.level_ = level;
+    if (debug_utils) {
+        command_buffer.begin_label_ext_ = reinterpret_cast<PFN_vkCmdBeginDebugUtilsLabelEXT>(
+            device.getProcAddr("vkCmdBeginDebugUtilsLabelEXT"));
+        command_buffer.end_label_ext_ = reinterpret_cast<PFN_vkCmdEndDebugUtilsLabelEXT>(
+            device.getProcAddr("vkCmdEndDebugUtilsLabelEXT"));
+        command_buffer.insert_label_ext_ = reinterpret_cast<PFN_vkCmdInsertDebugUtilsLabelEXT>(
+            device.getProcAddr("vkCmdInsertDebugUtilsLabelEXT"));
+    }
     command_buffer.cmd_ = device
                               .allocateCommandBuffers(vk::CommandBufferAllocateInfo{
                                   .commandPool = pool,
@@ -108,6 +123,9 @@ void CommandBuffer::destroy() {
     pool_ = nullptr;
     cmd_ = nullptr;
     level_ = vk::CommandBufferLevel::ePrimary;
+    begin_label_ext_ = nullptr;
+    end_label_ext_ = nullptr;
+    insert_label_ext_ = nullptr;
 }
 
 CommandBuffer& CommandBuffer::reset(vk::CommandBufferResetFlags flags) {
@@ -140,6 +158,42 @@ CommandBuffer& CommandBuffer::begin(const vk::CommandBufferInheritanceInfo& inhe
 
 CommandBuffer& CommandBuffer::end() {
     cmd_.end();
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::begin_debug_label(const char* name, const std::array<float, 4>& color) {
+    if (!begin_label_ext_)
+        return *this;
+
+    VkDebugUtilsLabelEXT label{};
+    label.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
+    label.pLabelName = name;
+    for (size_t i = 0; i < color.size(); ++i)
+        label.color[i] = color[i];
+
+    begin_label_ext_(cmd_, &label);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::end_debug_label() {
+    if (!end_label_ext_)
+        return *this;
+
+    end_label_ext_(cmd_);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::insert_debug_label(const char* name, const std::array<float, 4>& color) {
+    if (!insert_label_ext_)
+        return *this;
+
+    VkDebugUtilsLabelEXT label{};
+    label.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
+    label.pLabelName = name;
+    for (size_t i = 0; i < color.size(); ++i)
+        label.color[i] = color[i];
+
+    insert_label_ext_(cmd_, &label);
     return *this;
 }
 

@@ -110,6 +110,15 @@ public:
     /// @brief Waits for the device to become idle.
     void wait_idle();
 
+    /// @brief Returns true if VK_EXT_debug_utils is enabled.
+    bool debug_utils_enabled() const { return debug_utils_enabled_; }
+
+    /// @brief Sets a debug name on a Vulkan object. No-op without debug utils.
+    /// @param type Object type.
+    /// @param handle Raw object handle.
+    /// @param name Name to assign.
+    void set_debug_name(vk::ObjectType type, uint64_t handle, const char* name) const;
+
     /// @brief Submits a command buffer on the graphics queue and waits for it.
     /// @param cmd Command buffer to submit.
     void submit_and_wait(vk::CommandBuffer cmd);
@@ -326,6 +335,8 @@ private:
     uint32_t transfer_queue_family_index_ = 0;
     bool has_compute_queue_ = false;
     bool has_transfer_queue_ = false;
+    bool debug_utils_enabled_ = false;
+    PFN_vkSetDebugUtilsObjectNameEXT set_debug_name_ext_ = nullptr;
     Allocator allocator_;
     ContextInfo info_;
 

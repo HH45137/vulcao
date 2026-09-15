@@ -209,6 +209,7 @@ void record_frame(vulcao::CommandBuffer& cmd,
 
     cmd.reset();
     cmd.begin();
+    cmd.begin_debug_label("frame", {0.2f, 0.5f, 0.9f, 1.0f});
     cmd.transition(image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal,
                    range);
     cmd.transition(depth, vk::ImageLayout::eDepthStencilAttachmentOptimal);
@@ -226,6 +227,7 @@ void record_frame(vulcao::CommandBuffer& cmd,
     cmd.end_rendering();
     cmd.transition(image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR,
                    range);
+    cmd.end_debug_label();
     cmd.end();
 }
 
@@ -336,6 +338,9 @@ int main() {
             mip_levels);
         ctx.upload(texture, checkerboard, vk::ImageLayout::eShaderReadOnlyOptimal, true);
         vulcao::Sampler sampler = vulcao::Sampler::linear(ctx.device(), true);
+        ctx.set_debug_name(vk::ObjectType::eImage,
+                           reinterpret_cast<uint64_t>(static_cast<VkImage>(texture.handle())),
+                           "checkerboard");
         std::cout << "texture: " << texture_size << "x" << texture_size << ", " << mip_levels
                   << " mip levels" << std::endl;
 

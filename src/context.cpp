@@ -94,6 +94,27 @@ void Context::create_instance(const ContextInfo& info) {
 
     vkb_instance_ = check(builder.build(), "create instance");
     instance_ = vk::Instance{vkb_instance_.instance};
+
+    debug_utils_enabled_ = vkb_instance_.debug_messenger != VK_NULL_HANDLE;
+    for (const char* extension : info.extensions)
+        if (std::string_view(extension) == VK_EXT_DEBUG_UTILS_EXTENSION_NAME)
+            debug_utils_enabled_ = true;
+
+    if (debug_utils_enabled_)
+        set_debug_name_ext_ = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
+            instance_.getProcAddr("vkSetDebugUtilsObjectNameEXT"));
+}
+
+void Context::set_debug_name(vk::ObjectType type, uint64_t handle, const char* name) const {
+    if (!set_debug_name_ext_)
+        return;
+
+    VkDebugUtilsObjectNameInfoEXT info{};
+    info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+    info.objectType = static_cast<VkObjectType>(type);
+    info.objectHandle = handle;
+    info.pObjectName = name;
+    set_debug_name_ext_(device_, &info);
 }
 
 std::vector<PhysicalDeviceInfo> Context::enumerate_physical_devices() const {
@@ -277,7 +298,9 @@ void Context::create_command_pool() {
         .queueFamilyIndex = graphics_queue_family_index_,
     });
 
-    immediate_command_buffer_ = CommandBuffer::allocate(device_, command_pool_);
+    immediate_command_buffer_ =
+        CommandBuffer::allocate(device_, command_pool_, vk::CommandBufferLevel::ePrimary,
+                                debug_utils_enabled_);
     submit_fence_ = Fence::create(device_);
 }
 
