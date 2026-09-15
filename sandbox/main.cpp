@@ -11,6 +11,9 @@
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_access.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <vulkan/vulkan.hpp>
 
 #include "vulcao/buffer.h"
@@ -35,10 +38,21 @@ std::filesystem::path shader_path(const char* name) {
     return std::filesystem::path(VULCAO_SHADER_DIR) / name;
 }
 
-struct TexturedVertex {
-    float position[2];
+struct CubeVertex {
+    float position[3];
     float uv[2];
 };
+
+struct Transform {
+    glm::vec4 row0;
+    glm::vec4 row1;
+    glm::vec4 row2;
+    glm::vec4 row3;
+};
+
+Transform make_transform(const glm::mat4& mvp) {
+    return Transform{glm::row(mvp, 0), glm::row(mvp, 1), glm::row(mvp, 2), glm::row(mvp, 3)};
+}
 
 std::vector<uint8_t> make_checkerboard(uint32_t size, uint32_t cell) {
     std::vector<uint8_t> pixels(static_cast<size_t>(size) * size * 4);
@@ -136,6 +150,9 @@ void record_frame(vulcao::CommandBuffer& cmd,
                   const vulcao::PipelineLayout& pipeline_layout,
                   const vulcao::DescriptorSet& descriptor_set,
                   const vulcao::Buffer& vertex_buffer,
+                  const vulcao::Buffer& index_buffer,
+                  vulcao::Image& depth,
+                  const Transform& transform,
                   vk::Image image,
                   vk::ImageView view,
                   vk::Extent2D extent) {
@@ -161,25 +178,41 @@ void record_frame(vulcao::CommandBuffer& cmd,
         .clearValue = clear,
     };
 
+    vk::ClearValue depth_clear{};
+    depth_clear.depthStencil.depth = 1.0f;
+    depth_clear.depthStencil.stencil = 0;
+
+    vk::RenderingAttachmentInfo depth_attachment{
+        .imageView = depth.view(),
+        .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+        .loadOp = vk::AttachmentLoadOp::eClear,
+        .storeOp = vk::AttachmentStoreOp::eDontCare,
+        .clearValue = depth_clear,
+    };
+
     vk::RenderingInfo rendering_info{
         .renderArea = vk::Rect2D{.offset = vk::Offset2D{0, 0}, .extent = extent},
         .layerCount = 1,
         .colorAttachmentCount = 1,
         .pColorAttachments = &color_attachment,
+        .pDepthAttachment = &depth_attachment,
     };
 
     cmd.reset();
     cmd.begin();
     cmd.transition(image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal,
                    range);
+    cmd.transition(depth, vk::ImageLayout::eDepthStencilAttachmentOptimal);
     cmd.begin_rendering(rendering_info);
     cmd.bind_pipeline(vk::PipelineBindPoint::eGraphics, pipeline.handle());
     const vk::DescriptorSet raw_set = descriptor_set.handle();
     cmd.bind_descriptor_sets(vk::PipelineBindPoint::eGraphics, pipeline_layout.handle(), raw_set);
     cmd.set_viewport(extent);
     cmd.set_scissor(extent);
+    cmd.push_constants(pipeline_layout.handle(), vk::ShaderStageFlagBits::eVertex, 0, transform);
     cmd.bind_vertex_buffer(0, vertex_buffer);
-    cmd.draw(6);
+    cmd.bind_index_buffer(index_buffer, 0, vk::IndexType::eUint16);
+    cmd.draw_indexed(36);
     cmd.end_rendering();
     cmd.transition(image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR,
                    range);
@@ -191,18 +224,32 @@ void render_frame(vulcao::Context& ctx,
                   const vulcao::PipelineLayout& pipeline_layout,
                   const vulcao::DescriptorSet& descriptor_set,
                   const vulcao::Buffer& vertex_buffer,
+                  const vulcao::Buffer& index_buffer,
+                  vulcao::Image& depth,
+                  float time_seconds,
                   const vulcao::Semaphore& image_available,
                   const vulcao::Semaphore& render_finished) {
     vk::Device device = ctx.device();
     vk::SwapchainKHR swapchain = ctx.swapchain();
     vulcao::CommandBuffer& cmd = ctx.immediate_command_buffer();
+    const vk::Extent2D extent = ctx.swapchain_extent();
+
+    const float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
+    glm::mat4 projection = glm::perspectiveRH_ZO(glm::radians(60.0f), aspect, 0.1f, 100.0f);
+    projection[1][1] *= -1.0f;
+    const glm::mat4 view =
+        glm::lookAt(glm::vec3(0.0f, 0.0f, 3.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    const glm::mat4 model =
+        glm::rotate(glm::mat4(1.0f), time_seconds, glm::vec3(0.0f, 1.0f, 0.0f)) *
+        glm::rotate(glm::mat4(1.0f), time_seconds * 0.6f, glm::vec3(1.0f, 0.0f, 0.0f));
+    const Transform transform = make_transform(projection * view * model);
 
     uint32_t image_index =
         device.acquireNextImageKHR(swapchain, UINT64_MAX, image_available.handle()).value;
 
-    record_frame(cmd, pipeline, pipeline_layout, descriptor_set, vertex_buffer,
-                 ctx.swapchain_images()[image_index],
-                 ctx.swapchain_image_views()[image_index], ctx.swapchain_extent());
+    record_frame(cmd, pipeline, pipeline_layout, descriptor_set, vertex_buffer, index_buffer, depth,
+                 transform, ctx.swapchain_images()[image_index],
+                 ctx.swapchain_image_views()[image_index], extent);
 
     const vk::Semaphore wait_semaphore = image_available.handle();
     const vk::Semaphore signal_semaphore = render_finished.handle();
@@ -268,26 +315,26 @@ int main() {
                   << " mip levels" << std::endl;
 
         vulcao::ShaderModule vertex_shader = vulcao::ShaderModule::create_from_file(
-            ctx.device(), vk::ShaderStageFlagBits::eVertex, shader_path("texture.vert.spv"));
+            ctx.device(), vk::ShaderStageFlagBits::eVertex, shader_path("cube.vert.spv"));
         vulcao::ShaderModule fragment_shader = vulcao::ShaderModule::create_from_file(
-            ctx.device(), vk::ShaderStageFlagBits::eFragment, shader_path("texture.frag.spv"));
+            ctx.device(), vk::ShaderStageFlagBits::eFragment, shader_path("cube.frag.spv"));
 
-        const vulcao::VertexLayout vertex_layout = vulcao::make_vertex_layout<TexturedVertex>(
+        const vulcao::VertexLayout vertex_layout = vulcao::make_vertex_layout<CubeVertex>(
             vertex_shader.reflection(),
-            {offsetof(TexturedVertex, position), offsetof(TexturedVertex, uv)});
+            {offsetof(CubeVertex, position), offsetof(CubeVertex, uv)});
         std::cout << "vertex attributes from reflection: " << vertex_layout.attributes.size()
                   << std::endl;
-        std::cout << "fragment bindings in set 0: "
-                  << fragment_shader.reflection().bindings_for_set(0).size() << std::endl;
 
         const vulcao::GraphicsPipelineInfo pipeline_info{
             .vertex_shader = vertex_shader.handle(),
             .fragment_shader = fragment_shader.handle(),
             .vertex_entry = "vertMain",
             .fragment_entry = "fragMain",
+            .depth_test = true,
             .vertex_bindings = vertex_layout.bindings,
             .vertex_attributes = vertex_layout.attributes,
             .color_formats = {ctx.swapchain_format()},
+            .depth_format = vk::Format::eD32Sfloat,
         };
 
         const std::array<vulcao::ShaderReflection, 2> stage_reflections{
@@ -303,38 +350,67 @@ int main() {
         };
         vulcao::DescriptorPool descriptor_pool =
             vulcao::DescriptorPool::create(ctx.device(), descriptor_pool_size, 1);
-        vulcao::DescriptorSet descriptor_set = descriptor_pool.allocate(pipeline_layout.set_layouts()[0]);
+        vulcao::DescriptorSet descriptor_set =
+            descriptor_pool.allocate(pipeline_layout.set_layouts()[0]);
         descriptor_set.write_image(0, texture, sampler);
 
-        const std::array<TexturedVertex, 6> vertices{{
-            {{-0.8f, -0.8f}, {0.0f, 1.0f}},
-            {{0.8f, -0.8f}, {1.0f, 1.0f}},
-            {{0.8f, 0.8f}, {1.0f, 0.0f}},
-            {{-0.8f, -0.8f}, {0.0f, 1.0f}},
-            {{0.8f, 0.8f}, {1.0f, 0.0f}},
-            {{-0.8f, 0.8f}, {0.0f, 0.0f}},
+        const std::array<CubeVertex, 24> vertices{{
+            {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f}}, {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f}},
+            {{0.5f, 0.5f, 0.5f}, {1.0f, 0.0f}},   {{0.5f, -0.5f, 0.5f}, {1.0f, 1.0f}},
+            {{-0.5f, -0.5f, 0.5f}, {0.0f, 1.0f}}, {{-0.5f, 0.5f, 0.5f}, {0.0f, 0.0f}},
+            {{-0.5f, 0.5f, -0.5f}, {1.0f, 0.0f}}, {{-0.5f, -0.5f, -0.5f}, {1.0f, 1.0f}},
+            {{-0.5f, 0.5f, -0.5f}, {0.0f, 1.0f}}, {{-0.5f, 0.5f, 0.5f}, {0.0f, 0.0f}},
+            {{0.5f, 0.5f, 0.5f}, {1.0f, 0.0f}},   {{0.5f, 0.5f, -0.5f}, {1.0f, 1.0f}},
+            {{-0.5f, -0.5f, 0.5f}, {0.0f, 0.0f}}, {{-0.5f, -0.5f, -0.5f}, {0.0f, 1.0f}},
+            {{0.5f, -0.5f, -0.5f}, {1.0f, 1.0f}}, {{0.5f, -0.5f, 0.5f}, {1.0f, 0.0f}},
+            {{-0.5f, -0.5f, 0.5f}, {0.0f, 0.0f}}, {{0.5f, -0.5f, 0.5f}, {1.0f, 0.0f}},
+            {{0.5f, 0.5f, 0.5f}, {1.0f, 1.0f}},   {{-0.5f, 0.5f, 0.5f}, {0.0f, 1.0f}},
+            {{0.5f, -0.5f, -0.5f}, {0.0f, 0.0f}}, {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f}},
+            {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f}}, {{0.5f, 0.5f, -0.5f}, {0.0f, 1.0f}},
         }};
+        const std::array<uint16_t, 36> indices{{
+            0,  1,  2,  0,  2,  3,  4,  5,  6,  4,  6,  7,  8,  9,  10, 8,  10, 11,
+            12, 13, 14, 12, 14, 15, 16, 17, 18, 16, 18, 19, 20, 21, 22, 20, 22, 23,
+        }};
+
         vulcao::Buffer vertex_buffer = vulcao::Buffer::create(
-            ctx.allocator(), sizeof(TexturedVertex) * vertices.size(),
+            ctx.allocator(), sizeof(CubeVertex) * vertices.size(),
             vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst);
         ctx.upload(vertex_buffer, vertices);
+
+        vulcao::Buffer index_buffer = vulcao::Buffer::create(
+            ctx.allocator(), sizeof(uint16_t) * indices.size(),
+            vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst);
+        ctx.upload(index_buffer, indices);
+
+        vulcao::Image depth = vulcao::Image::create_depth(ctx.allocator(), ctx.swapchain_extent());
 
         vulcao::Semaphore image_available = vulcao::Semaphore::create(ctx.device());
         vulcao::Semaphore render_finished = vulcao::Semaphore::create(ctx.device());
 
-        auto redraw = [&]() {
+        auto recreate_swapchain = [&]() {
+            vk::Extent2D extent = framebuffer_extent(window);
+            if (extent.width == 0 || extent.height == 0)
+                return false;
+            ctx.recreate_swapchain(extent);
+            depth = vulcao::Image::create_depth(ctx.allocator(), ctx.swapchain_extent());
+            return true;
+        };
+
+        auto redraw = [&](float time_seconds) {
             try {
-                render_frame(ctx, pipeline, pipeline_layout, descriptor_set, vertex_buffer, image_available, render_finished);
+                render_frame(ctx, pipeline, pipeline_layout, descriptor_set, vertex_buffer,
+                             index_buffer, depth, time_seconds, image_available, render_finished);
             } catch (const vk::OutOfDateKHRError&) {
-                vk::Extent2D extent = framebuffer_extent(window);
-                if (extent.width == 0 || extent.height == 0)
+                if (!recreate_swapchain())
                     return;
-                ctx.recreate_swapchain(extent);
-                render_frame(ctx, pipeline, pipeline_layout, descriptor_set, vertex_buffer, image_available, render_finished);
+                render_frame(ctx, pipeline, pipeline_layout, descriptor_set, vertex_buffer,
+                             index_buffer, depth, time_seconds, image_available, render_finished);
             }
         };
 
-        redraw();
+        const double start_time = glfwGetTime();
+        redraw(0.0f);
         std::cout << "vulkan initialized" << std::endl;
 
         bool framebuffer_resized = false;
@@ -344,16 +420,17 @@ int main() {
         });
 
         while (!glfwWindowShouldClose(window)) {
-            glfwWaitEvents();
+            glfwPollEvents();
 
             if (framebuffer_resized) {
                 framebuffer_resized = false;
-                vk::Extent2D extent = framebuffer_extent(window);
-                if (extent.width == 0 || extent.height == 0)
+                if (!recreate_swapchain())
                     continue;
-                ctx.recreate_swapchain(extent);
-                redraw();
+                redraw(static_cast<float>(glfwGetTime() - start_time));
+                continue;
             }
+
+            redraw(static_cast<float>(glfwGetTime() - start_time));
         }
 
         ctx.wait_idle();

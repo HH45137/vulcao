@@ -6,6 +6,11 @@ set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory("${VULCAO_THIRD_PARTY_DIR}/glfw" "${CMAKE_BINARY_DIR}/third_party/glfw")
 
+set(GLM_BUILD_LIBRARY OFF CACHE BOOL "" FORCE)
+set(GLM_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLM_BUILD_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory("${VULCAO_THIRD_PARTY_DIR}/glm" "${CMAKE_BINARY_DIR}/third_party/glm")
+
 # --- sandbox -----------------------------------------------------------------
 
 add_executable(sandbox main.cpp)
@@ -13,6 +18,7 @@ add_executable(sandbox main.cpp)
 target_link_libraries(sandbox PRIVATE
     vulcao
     glfw
+    glm::glm
 )
 
 # --- shaders -----------------------------------------------------------------
@@ -29,8 +35,8 @@ file(MAKE_DIRECTORY "${SHADER_OUTPUT_DIR}")
 
 set(SANDBOX_SHADERS
     "reduce.slang|compMain|compute|reduce.comp.spv"
-    "texture.slang|vertMain|vertex|texture.vert.spv"
-    "texture.slang|fragMain|fragment|texture.frag.spv"
+    "cube.slang|vertMain|vertex|cube.vert.spv"
+    "cube.slang|fragMain|fragment|cube.frag.spv"
 )
 
 set(SANDBOX_SPV)
