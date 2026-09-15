@@ -7,16 +7,45 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(Vulkan REQUIRED)
 
-add_executable(${PROJECT_NAME}
-    src/main.cpp
-    src/graphics/context.cpp
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/glfw)
+
+set(VK_BOOTSTRAP_TEST OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/vk-bootstrap)
+
+set(VMA_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/VulkanMemoryAllocator)
+
+set(GLM_BUILD_LIBRARY OFF CACHE BOOL "" FORCE)
+set(GLM_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLM_BUILD_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/glm)
+
+add_library(vulcao STATIC
+    src/context.cpp
+    src/vma_impl.cpp
 )
 
-target_link_libraries(${PROJECT_NAME} PRIVATE
+target_include_directories(vulcao PUBLIC include)
+
+target_link_libraries(vulcao PUBLIC
     Vulkan::Vulkan
     Vulkan::Headers
+    vk-bootstrap::vk-bootstrap
+    VulkanMemoryAllocator::Headers
+    glm::glm
 )
 
-target_compile_definitions(${PROJECT_NAME} PRIVATE
+target_compile_definitions(vulcao PUBLIC
     VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
-    )
+)
+
+add_executable(sandbox sandbox/main.cpp)
+
+target_link_libraries(sandbox PRIVATE
+    vulcao
+    glfw
+)
