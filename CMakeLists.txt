@@ -125,6 +125,7 @@ if(VULCAO_BUILD_TESTS)
 
     set(DOCTEST_WITH_TESTS OFF CACHE BOOL "" FORCE)
     set(DOCTEST_WITH_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(DOCTEST_NO_INSTALL ON CACHE BOOL "" FORCE)
     add_subdirectory(third_party/doctest)
 
     add_subdirectory(tests)
