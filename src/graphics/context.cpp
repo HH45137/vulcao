@@ -3,9 +3,8 @@
 #include <iostream>
 
 namespace vulcao::graphics {
-    vk::raii::Instance Context::make_instance(const vk::raii::Context& context,
-                                             const std::string& appName,
-                                             uint32_t appVersion) {
+    vk::Instance Context::make_instance(const std::string& appName,
+                                        uint32_t appVersion) {
         vk::ApplicationInfo appInfo{
             .pApplicationName = appName.c_str(),
             .applicationVersion = appVersion,
@@ -16,13 +15,13 @@ namespace vulcao::graphics {
             .pApplicationInfo = &appInfo,
         };
 
-        return vk::raii::Instance(context, createInfo);
+        return vk::createInstance(createInfo);
     }
-    vk::raii::Device Context::make_device(){
+    vk::Device Context::make_device(){
         inquery_physical_devices_info();
         std::cout<<"------------------- devices info -------------------"<<std::endl;
         std::vector<vk::QueueFamilyProperties> queue_family_properties = physical_device_.getQueueFamilyProperties();
-        
+
         std::cout << "number of queue families: " << queue_family_properties.size() << std::endl;
         for (uint32_t i = 0; i < queue_family_properties.size(); i++) {
             std::cout << "Queue family " << i << ": " << queue_family_properties[i].queueCount <<
@@ -47,23 +46,23 @@ namespace vulcao::graphics {
             .queueCreateInfoCount = 1,
             .pQueueCreateInfos    = &device_queue_create_info,
         };
-        return vk::raii::Device(physical_device_, deviceCreateInfo);
+        return physical_device_.createDevice(deviceCreateInfo);
     }
-    vk::raii::CommandPool Context::make_command_pool(){
+    vk::CommandPool Context::make_command_pool(){
         vk::CommandPoolCreateInfo command_pool_create_info{};
         command_pool_create_info.flags = {};
         command_pool_create_info.queueFamilyIndex = graphics_queue_family_index_;
 
-        return vk::raii::CommandPool(device_, command_pool_create_info);
+        return device_.createCommandPool(command_pool_create_info);
     }
-    vk::raii::CommandBuffer Context::make_command_buffer(){
+    vk::CommandBuffer Context::make_command_buffer(){
         vk::CommandBufferAllocateInfo commandBufferAllocateInfo{
             .commandPool        = command_pool_,
             .level              = vk::CommandBufferLevel::ePrimary,
             .commandBufferCount = 1,
         };
-        vk::raii::CommandBuffer       commandBuffer = std::move( vk::raii::CommandBuffers( device_, commandBufferAllocateInfo ).front() );
-        return commandBuffer;
+        std::vector<vk::CommandBuffer> commandBuffers = device_.allocateCommandBuffers(commandBufferAllocateInfo);
+        return commandBuffers.front();
     }
     void Context::inquery_physical_devices_info(){
         std::cout<<"------------------- devices info -------------------"<<std::endl;
@@ -126,14 +125,21 @@ namespace vulcao::graphics {
     }
 
     Context::Context(const std::string& appName, uint32_t appVersion)
-        : context_{},
-          instance_{make_instance(context_, appName, appVersion)},
-          physical_devices_(instance_),
+        : instance_{make_instance(appName, appVersion)},
+          physical_devices_(instance_.enumeratePhysicalDevices()),
           physical_device_(physical_devices_.front()),
           device_{make_device()},
-          graphics_queue_{device_.getQueue(graphics_queue_family_index_, 0) },
+          graphics_queue_{device_.getQueue(graphics_queue_family_index_, 0)},
           command_pool_{make_command_pool()},
           immediate_command_buffer_{ make_command_buffer() }
     {}
-          
+
+    Context::~Context() {
+        device_.waitIdle();
+        device_.freeCommandBuffers(command_pool_, immediate_command_buffer_);
+        device_.destroyCommandPool(command_pool_);
+        device_.destroy();
+        instance_.destroy();
+    }
+
 }
