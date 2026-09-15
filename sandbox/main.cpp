@@ -23,6 +23,7 @@
 #include "vulcao/sampler.h"
 #include "vulcao/semaphore.h"
 #include "vulcao/shader_module.h"
+#include "vulcao/vertex_layout.h"
 
 #ifndef VULCAO_SHADER_DIR
 #define VULCAO_SHADER_DIR "shaders"
@@ -271,30 +272,21 @@ int main() {
         vulcao::ShaderModule fragment_shader = vulcao::ShaderModule::create_from_file(
             ctx.device(), vk::ShaderStageFlagBits::eFragment, shader_path("texture.frag.spv"));
 
-        std::vector<vk::VertexInputAttributeDescription> attributes =
-            vertex_shader.reflection().vertex_attributes;
-        for (vk::VertexInputAttributeDescription& attribute : attributes) {
-            attribute.binding = 0;
-            attribute.offset = attribute.location == 0 ? offsetof(TexturedVertex, position)
-                                                       : offsetof(TexturedVertex, uv);
-        }
-        std::cout << "vertex attributes from reflection: " << attributes.size() << std::endl;
+        const vulcao::VertexLayout vertex_layout = vulcao::make_vertex_layout<TexturedVertex>(
+            vertex_shader.reflection(),
+            {offsetof(TexturedVertex, position), offsetof(TexturedVertex, uv)});
+        std::cout << "vertex attributes from reflection: " << vertex_layout.attributes.size()
+                  << std::endl;
         std::cout << "fragment bindings in set 0: "
                   << fragment_shader.reflection().bindings_for_set(0).size() << std::endl;
-
-        const vk::VertexInputBindingDescription vertex_binding{
-            .binding = 0,
-            .stride = sizeof(TexturedVertex),
-            .inputRate = vk::VertexInputRate::eVertex,
-        };
 
         const vulcao::GraphicsPipelineInfo pipeline_info{
             .vertex_shader = vertex_shader.handle(),
             .fragment_shader = fragment_shader.handle(),
             .vertex_entry = "vertMain",
             .fragment_entry = "fragMain",
-            .vertex_bindings = {vertex_binding},
-            .vertex_attributes = attributes,
+            .vertex_bindings = vertex_layout.bindings,
+            .vertex_attributes = vertex_layout.attributes,
             .color_formats = {ctx.swapchain_format()},
         };
 
