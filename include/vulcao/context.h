@@ -126,25 +126,30 @@ public:
     /// @param data Source pointer.
     /// @param size Number of bytes to upload.
     /// @param final_layout Layout the image is transitioned to after the upload.
+    /// @param generate_mips True to generate the mip chain after uploading level 0.
     void upload(Image& dst,
                 const void* data,
                 vk::DeviceSize size,
-                vk::ImageLayout final_layout = vk::ImageLayout::eShaderReadOnlyOptimal);
+                vk::ImageLayout final_layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                bool generate_mips = false);
 
     /// @brief Uploads a contiguous range to an image and transitions it to a final layout.
     /// @param dst Destination image, must have TransferDst usage.
     /// @param data Source range.
     /// @param final_layout Layout the image is transitioned to after the upload.
+    /// @param generate_mips True to generate the mip chain after uploading level 0.
     template <typename Container>
         requires std::ranges::contiguous_range<Container>
     void upload(Image& dst,
                 const Container& data,
-                vk::ImageLayout final_layout = vk::ImageLayout::eShaderReadOnlyOptimal) {
+                vk::ImageLayout final_layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                bool generate_mips = false) {
         using T = std::ranges::range_value_t<Container>;
         upload(dst,
                std::ranges::data(data),
                static_cast<vk::DeviceSize>(std::ranges::size(data)) * sizeof(T),
-               final_layout);
+               final_layout,
+               generate_mips);
     }
 
     /// @brief Returns true if the context has been initialized.

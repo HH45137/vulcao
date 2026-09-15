@@ -3,6 +3,7 @@
 #include "vulcao/buffer.h"
 #include "vulcao/image.h"
 
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
@@ -296,6 +297,53 @@ CommandBuffer& CommandBuffer::copy_image_to_buffer(vk::Buffer dst,
                                                    vk::Offset3D offset) {
     return copy_image_to_buffer(dst, src.handle(), src.extent(),
                                 single_layer(src.subresource_range()), offset);
+}
+
+CommandBuffer& CommandBuffer::generate_mipmaps(Image& image, vk::ImageLayout final_layout) {
+    const uint32_t level_count = image.mip_levels();
+    if (level_count <= 1) {
+        transition(image, final_layout);
+        return *this;
+    }
+
+    const vk::ImageAspectFlags aspect = image.subresource_range().aspectMask;
+    const vk::Extent3D extent = image.extent();
+    const vk::Image handle = image.handle();
+
+    for (uint32_t level = 1; level < level_count; ++level) {
+        const vk::ImageSubresourceRange src_range{aspect, level - 1, 1, 0, 1};
+        const vk::ImageSubresourceRange dst_range{aspect, level, 1, 0, 1};
+
+        const vk::ImageLayout src_old =
+            level == 1 ? vk::ImageLayout::eTransferDstOptimal : final_layout;
+        transition(handle, src_old, vk::ImageLayout::eTransferSrcOptimal, src_range);
+
+        const uint32_t src_width = std::max(1u, extent.width >> (level - 1));
+        const uint32_t src_height = std::max(1u, extent.height >> (level - 1));
+        const uint32_t dst_width = std::max(1u, extent.width >> level);
+        const uint32_t dst_height = std::max(1u, extent.height >> level);
+
+        vk::ImageBlit region{};
+        region.srcSubresource = vk::ImageSubresourceLayers{aspect, level - 1, 0, 1};
+        region.srcOffsets[0] = vk::Offset3D{0, 0, 0};
+        region.srcOffsets[1] = vk::Offset3D{static_cast<int32_t>(src_width),
+                                            static_cast<int32_t>(src_height), 1};
+        region.dstSubresource = vk::ImageSubresourceLayers{aspect, level, 0, 1};
+        region.dstOffsets[0] = vk::Offset3D{0, 0, 0};
+        region.dstOffsets[1] = vk::Offset3D{static_cast<int32_t>(dst_width),
+                                            static_cast<int32_t>(dst_height), 1};
+
+        blit_image(handle, vk::ImageLayout::eTransferSrcOptimal, handle,
+                   vk::ImageLayout::eTransferDstOptimal, region, vk::Filter::eLinear);
+
+        transition(handle, vk::ImageLayout::eTransferDstOptimal, final_layout, dst_range);
+    }
+
+    const vk::ImageSubresourceRange source_levels{aspect, 0, level_count - 1, 0, 1};
+    transition(handle, vk::ImageLayout::eTransferSrcOptimal, final_layout, source_levels);
+
+    image.set_layout(final_layout);
+    return *this;
 }
 
 CommandBuffer& CommandBuffer::copy_image(vk::Image src,

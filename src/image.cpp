@@ -111,6 +111,30 @@ Image Image::create(Allocator& allocator,
     return image;
 }
 
+Image Image::create_2d(Allocator& allocator,
+                       vk::Extent2D extent,
+                       vk::Format format,
+                       vk::ImageUsageFlags usage,
+                       uint32_t mip_levels,
+                       vk::SampleCountFlagBits samples) {
+    return create(allocator, vk::ImageCreateInfo{
+                                 .imageType = vk::ImageType::e2D,
+                                 .format = format,
+                                 .extent = vk::Extent3D{extent.width, extent.height, 1},
+                                 .mipLevels = mip_levels,
+                                 .arrayLayers = 1,
+                                 .samples = samples,
+                                 .tiling = vk::ImageTiling::eOptimal,
+                                 .usage = usage,
+                                 .sharingMode = vk::SharingMode::eExclusive,
+                                 .initialLayout = vk::ImageLayout::eUndefined,
+                             });
+}
+
+Image Image::create_depth(Allocator& allocator, vk::Extent2D extent, vk::Format format) {
+    return create_2d(allocator, extent, format, vk::ImageUsageFlagBits::eDepthStencilAttachment);
+}
+
 void Image::destroy() {
     if (view_ != VK_NULL_HANDLE)
         device_.destroyImageView(vk::ImageView{view_});

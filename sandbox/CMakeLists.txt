@@ -29,8 +29,8 @@ file(MAKE_DIRECTORY "${SHADER_OUTPUT_DIR}")
 
 set(SANDBOX_SHADERS
     "reduce.slang|compMain|compute|reduce.comp.spv"
-    "triangle.slang|vertMain|vertex|triangle.vert.spv"
-    "triangle.slang|fragMain|fragment|triangle.frag.spv"
+    "texture.slang|vertMain|vertex|texture.vert.spv"
+    "texture.slang|fragMain|fragment|texture.frag.spv"
 )
 
 set(SANDBOX_SPV)

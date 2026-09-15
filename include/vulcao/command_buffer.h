@@ -194,6 +194,13 @@ public:
                                         const Image& src,
                                         vk::Offset3D offset = vk::Offset3D{0, 0, 0});
 
+    /// @brief Generates the mip chain of an image by blitting level to level.
+    /// @param image Image to generate mipmaps for. Its whole range must be in TransferDst layout with level 0 filled.
+    /// @param final_layout Layout all levels are transitioned to at the end.
+    /// @return This command buffer.
+    CommandBuffer& generate_mipmaps(Image& image,
+                                    vk::ImageLayout final_layout = vk::ImageLayout::eShaderReadOnlyOptimal);
+
     /// @brief Copies one image into another using raw handles.
     /// @param src Source image.
     /// @param src_layout Layout of the source image.

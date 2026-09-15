@@ -295,7 +295,8 @@ void Context::upload(Buffer& dst, const void* data, vk::DeviceSize size) {
     });
 }
 
-void Context::upload(Image& dst, const void* data, vk::DeviceSize size, vk::ImageLayout final_layout) {
+void Context::upload(Image& dst, const void* data, vk::DeviceSize size, vk::ImageLayout final_layout,
+                     bool generate_mips) {
     if (size == 0)
         return;
     if (!dst.valid())
@@ -311,7 +312,10 @@ void Context::upload(Image& dst, const void* data, vk::DeviceSize size, vk::Imag
     immediate([&](CommandBuffer& cmd) {
         cmd.transition(dst, vk::ImageLayout::eTransferDstOptimal);
         cmd.copy_buffer_to_image(staging.handle(), dst);
-        cmd.transition(dst, final_layout);
+        if (generate_mips && dst.mip_levels() > 1)
+            cmd.generate_mipmaps(dst, final_layout);
+        else
+            cmd.transition(dst, final_layout);
     });
 }
 

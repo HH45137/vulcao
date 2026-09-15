@@ -40,6 +40,30 @@ public:
                         const vk::ImageCreateInfo& image_info,
                         vk::ImageViewCreateInfo view_info = {});
 
+    /// @brief Creates a 2D image with a view.
+    /// @param allocator Allocator used for the memory.
+    /// @param extent Image width and height.
+    /// @param format Image format.
+    /// @param usage Image usage flags.
+    /// @param mip_levels Number of mip levels.
+    /// @param samples Sample count.
+    /// @return The created image.
+    static Image create_2d(Allocator& allocator,
+                           vk::Extent2D extent,
+                           vk::Format format,
+                           vk::ImageUsageFlags usage,
+                           uint32_t mip_levels = 1,
+                           vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1);
+
+    /// @brief Creates a depth image with a view.
+    /// @param allocator Allocator used for the memory.
+    /// @param extent Image width and height.
+    /// @param format Depth format.
+    /// @return The created image.
+    static Image create_depth(Allocator& allocator,
+                              vk::Extent2D extent,
+                              vk::Format format = vk::Format::eD32Sfloat);
+
     /// @brief Returns true if the image holds a valid handle.
     bool valid() const { return image_ != VK_NULL_HANDLE; }
 
@@ -54,6 +78,9 @@ public:
 
     /// @brief Returns the image extent.
     vk::Extent3D extent() const { return extent_; }
+
+    /// @brief Returns the number of mip levels covered by the view.
+    uint32_t mip_levels() const { return range_.levelCount; }
 
     /// @brief Returns the image format.
     vk::Format format() const { return format_; }

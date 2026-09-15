@@ -1,4 +1,5 @@
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -16,8 +17,10 @@
 #include "vulcao/command_buffer.h"
 #include "vulcao/context.h"
 #include "vulcao/descriptor_set.h"
+#include "vulcao/image.h"
 #include "vulcao/pipeline.h"
 #include "vulcao/pipeline_layout.h"
+#include "vulcao/sampler.h"
 #include "vulcao/semaphore.h"
 #include "vulcao/shader_module.h"
 
@@ -31,10 +34,26 @@ std::filesystem::path shader_path(const char* name) {
     return std::filesystem::path(VULCAO_SHADER_DIR) / name;
 }
 
-struct Vertex {
-    float position[3];
-    float color[3];
+struct TexturedVertex {
+    float position[2];
+    float uv[2];
 };
+
+std::vector<uint8_t> make_checkerboard(uint32_t size, uint32_t cell) {
+    std::vector<uint8_t> pixels(static_cast<size_t>(size) * size * 4);
+    for (uint32_t y = 0; y < size; ++y) {
+        for (uint32_t x = 0; x < size; ++x) {
+            const bool light = ((x / cell) + (y / cell)) % 2 == 0;
+            const uint8_t value = light ? 235 : 30;
+            const size_t index = (static_cast<size_t>(y) * size + x) * 4;
+            pixels[index + 0] = value;
+            pixels[index + 1] = value;
+            pixels[index + 2] = value;
+            pixels[index + 3] = 255;
+        }
+    }
+    return pixels;
+}
 
 vk::SurfaceKHR create_surface(vk::Instance instance, GLFWwindow* window) {
     VkSurfaceKHR surface = VK_NULL_HANDLE;
@@ -113,6 +132,8 @@ void run_compute_test(vulcao::Context& ctx) {
 
 void record_frame(vulcao::CommandBuffer& cmd,
                   const vulcao::Pipeline& pipeline,
+                  const vulcao::PipelineLayout& pipeline_layout,
+                  const vulcao::DescriptorSet& descriptor_set,
                   const vulcao::Buffer& vertex_buffer,
                   vk::Image image,
                   vk::ImageView view,
@@ -152,10 +173,12 @@ void record_frame(vulcao::CommandBuffer& cmd,
                    range);
     cmd.begin_rendering(rendering_info);
     cmd.bind_pipeline(vk::PipelineBindPoint::eGraphics, pipeline.handle());
+    const vk::DescriptorSet raw_set = descriptor_set.handle();
+    cmd.bind_descriptor_sets(vk::PipelineBindPoint::eGraphics, pipeline_layout.handle(), raw_set);
     cmd.set_viewport(extent);
     cmd.set_scissor(extent);
     cmd.bind_vertex_buffer(0, vertex_buffer);
-    cmd.draw(3);
+    cmd.draw(6);
     cmd.end_rendering();
     cmd.transition(image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR,
                    range);
@@ -164,6 +187,8 @@ void record_frame(vulcao::CommandBuffer& cmd,
 
 void render_frame(vulcao::Context& ctx,
                   const vulcao::Pipeline& pipeline,
+                  const vulcao::PipelineLayout& pipeline_layout,
+                  const vulcao::DescriptorSet& descriptor_set,
                   const vulcao::Buffer& vertex_buffer,
                   const vulcao::Semaphore& image_available,
                   const vulcao::Semaphore& render_finished) {
@@ -174,7 +199,8 @@ void render_frame(vulcao::Context& ctx,
     uint32_t image_index =
         device.acquireNextImageKHR(swapchain, UINT64_MAX, image_available.handle()).value;
 
-    record_frame(cmd, pipeline, vertex_buffer, ctx.swapchain_images()[image_index],
+    record_frame(cmd, pipeline, pipeline_layout, descriptor_set, vertex_buffer,
+                 ctx.swapchain_images()[image_index],
                  ctx.swapchain_image_views()[image_index], ctx.swapchain_extent());
 
     const vk::Semaphore wait_semaphore = image_available.handle();
@@ -226,23 +252,39 @@ int main() {
 
         run_compute_test(ctx);
 
+        constexpr uint32_t texture_size = 256;
+        constexpr uint32_t texture_cell = 8;
+        const uint32_t mip_levels = static_cast<uint32_t>(std::floor(std::log2(texture_size))) + 1;
+        const std::vector<uint8_t> checkerboard = make_checkerboard(texture_size, texture_cell);
+        vulcao::Image texture = vulcao::Image::create_2d(
+            ctx.allocator(), vk::Extent2D{texture_size, texture_size}, vk::Format::eR8G8B8A8Srgb,
+            vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc |
+                vk::ImageUsageFlagBits::eTransferDst,
+            mip_levels);
+        ctx.upload(texture, checkerboard, vk::ImageLayout::eShaderReadOnlyOptimal, true);
+        vulcao::Sampler sampler = vulcao::Sampler::linear(ctx.device(), true);
+        std::cout << "texture: " << texture_size << "x" << texture_size << ", " << mip_levels
+                  << " mip levels" << std::endl;
+
         vulcao::ShaderModule vertex_shader = vulcao::ShaderModule::create_from_file(
-            ctx.device(), vk::ShaderStageFlagBits::eVertex, shader_path("triangle.vert.spv"));
+            ctx.device(), vk::ShaderStageFlagBits::eVertex, shader_path("texture.vert.spv"));
         vulcao::ShaderModule fragment_shader = vulcao::ShaderModule::create_from_file(
-            ctx.device(), vk::ShaderStageFlagBits::eFragment, shader_path("triangle.frag.spv"));
+            ctx.device(), vk::ShaderStageFlagBits::eFragment, shader_path("texture.frag.spv"));
 
         std::vector<vk::VertexInputAttributeDescription> attributes =
             vertex_shader.reflection().vertex_attributes;
         for (vk::VertexInputAttributeDescription& attribute : attributes) {
             attribute.binding = 0;
-            attribute.offset = attribute.location == 0 ? offsetof(Vertex, position)
-                                                       : offsetof(Vertex, color);
+            attribute.offset = attribute.location == 0 ? offsetof(TexturedVertex, position)
+                                                       : offsetof(TexturedVertex, uv);
         }
         std::cout << "vertex attributes from reflection: " << attributes.size() << std::endl;
+        std::cout << "fragment bindings in set 0: "
+                  << fragment_shader.reflection().bindings_for_set(0).size() << std::endl;
 
         const vk::VertexInputBindingDescription vertex_binding{
             .binding = 0,
-            .stride = sizeof(Vertex),
+            .stride = sizeof(TexturedVertex),
             .inputRate = vk::VertexInputRate::eVertex,
         };
 
@@ -263,13 +305,25 @@ int main() {
         vulcao::Pipeline pipeline =
             vulcao::Pipeline::create_graphics(ctx.device(), pipeline_layout, pipeline_info);
 
-        const std::array<Vertex, 3> vertices{{
-            {{0.0f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}},
-            {{0.5f, 0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}},
-            {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}},
+        const vk::DescriptorPoolSize descriptor_pool_size{
+            .type = vk::DescriptorType::eCombinedImageSampler,
+            .descriptorCount = 1,
+        };
+        vulcao::DescriptorPool descriptor_pool =
+            vulcao::DescriptorPool::create(ctx.device(), descriptor_pool_size, 1);
+        vulcao::DescriptorSet descriptor_set = descriptor_pool.allocate(pipeline_layout.set_layouts()[0]);
+        descriptor_set.write_image(0, texture, sampler);
+
+        const std::array<TexturedVertex, 6> vertices{{
+            {{-0.8f, -0.8f}, {0.0f, 1.0f}},
+            {{0.8f, -0.8f}, {1.0f, 1.0f}},
+            {{0.8f, 0.8f}, {1.0f, 0.0f}},
+            {{-0.8f, -0.8f}, {0.0f, 1.0f}},
+            {{0.8f, 0.8f}, {1.0f, 0.0f}},
+            {{-0.8f, 0.8f}, {0.0f, 0.0f}},
         }};
         vulcao::Buffer vertex_buffer = vulcao::Buffer::create(
-            ctx.allocator(), sizeof(Vertex) * vertices.size(),
+            ctx.allocator(), sizeof(TexturedVertex) * vertices.size(),
             vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst);
         ctx.upload(vertex_buffer, vertices);
 
@@ -278,13 +332,13 @@ int main() {
 
         auto redraw = [&]() {
             try {
-                render_frame(ctx, pipeline, vertex_buffer, image_available, render_finished);
+                render_frame(ctx, pipeline, pipeline_layout, descriptor_set, vertex_buffer, image_available, render_finished);
             } catch (const vk::OutOfDateKHRError&) {
                 vk::Extent2D extent = framebuffer_extent(window);
                 if (extent.width == 0 || extent.height == 0)
                     return;
                 ctx.recreate_swapchain(extent);
-                render_frame(ctx, pipeline, vertex_buffer, image_available, render_finished);
+                render_frame(ctx, pipeline, pipeline_layout, descriptor_set, vertex_buffer, image_available, render_finished);
             }
         };
 
