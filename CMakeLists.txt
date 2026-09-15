@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(VULCAO_BUILD_SANDBOX "Build the vulcao sandbox example" ON)
+option(VULCAO_INSTALL "Generate vulcao install rules" ${PROJECT_IS_TOP_LEVEL})
 
 set(VULCAO_THIRD_PARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
 
@@ -54,14 +55,60 @@ target_compile_features(vulcao PUBLIC cxx_std_20)
 target_link_libraries(vulcao PUBLIC
     Vulkan::Vulkan
     Vulkan::Headers
-    vk-bootstrap::vk-bootstrap
-    VulkanMemoryAllocator::Headers
-    spirv-reflect-static
+    "$<BUILD_INTERFACE:vk-bootstrap::vk-bootstrap>"
+    "$<INSTALL_INTERFACE:vulcao::vk-bootstrap>"
+    "$<BUILD_INTERFACE:VulkanMemoryAllocator::Headers>"
+    "$<INSTALL_INTERFACE:vulcao::vma>"
+    "$<BUILD_INTERFACE:spirv-reflect-static>"
+    "$<INSTALL_INTERFACE:vulcao::spirv-reflect>"
 )
 
 target_compile_definitions(vulcao PUBLIC
     VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
 )
+
+if(VULCAO_INSTALL)
+    include(GNUInstallDirs)
+    include(CMakePackageConfigHelpers)
+
+    install(TARGETS vulcao
+        EXPORT vulcaoTargets
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+    install(DIRECTORY include/vulcao DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+    install(TARGETS vk-bootstrap spirv-reflect-static
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+
+    install(FILES
+        "${VULCAO_THIRD_PARTY_DIR}/vk-bootstrap/src/VkBootstrap.h"
+        "${VULCAO_THIRD_PARTY_DIR}/spirv-reflect/spirv_reflect.h"
+        "${VULCAO_THIRD_PARTY_DIR}/VulkanMemoryAllocator/include/vk_mem_alloc.h"
+        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/vulcao/third_party")
+
+    install(EXPORT vulcaoTargets
+        FILE vulcaoTargets.cmake
+        NAMESPACE vulcao::
+        DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/vulcao")
+
+    configure_package_config_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/vulcaoConfig.cmake.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/vulcaoConfig.cmake"
+        INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/vulcao")
+
+    write_basic_package_version_file(
+        "${CMAKE_CURRENT_BINARY_DIR}/vulcaoConfigVersion.cmake"
+        VERSION ${PROJECT_VERSION}
+        COMPATIBILITY SameMajorVersion)
+
+    install(FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/vulcaoConfig.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/vulcaoConfigVersion.cmake"
+        DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/vulcao")
+endif()
 
 # --- examples ----------------------------------------------------------------
 

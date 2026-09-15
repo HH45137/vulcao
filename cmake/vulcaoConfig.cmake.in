@@ -1,0 +1,33 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(Vulkan)
+
+set(_vulcao_third_party_include "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@/vulcao/third_party")
+set(_vulcao_lib_dir "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@")
+
+if(NOT TARGET vulcao::vk-bootstrap)
+    add_library(vulcao::vk-bootstrap STATIC IMPORTED)
+    set_target_properties(vulcao::vk-bootstrap PROPERTIES
+        IMPORTED_LOCATION
+            "${_vulcao_lib_dir}/${CMAKE_STATIC_LIBRARY_PREFIX}vk-bootstrap${CMAKE_STATIC_LIBRARY_SUFFIX}"
+        IMPORTED_LINK_INTERFACE_LANGUAGES "CXX"
+        INTERFACE_INCLUDE_DIRECTORIES "${_vulcao_third_party_include}")
+endif()
+
+if(NOT TARGET vulcao::spirv-reflect)
+    add_library(vulcao::spirv-reflect STATIC IMPORTED)
+    set_target_properties(vulcao::spirv-reflect PROPERTIES
+        IMPORTED_LOCATION
+            "${_vulcao_lib_dir}/${CMAKE_STATIC_LIBRARY_PREFIX}spirv-reflect-static${CMAKE_STATIC_LIBRARY_SUFFIX}"
+        IMPORTED_LINK_INTERFACE_LANGUAGES "C"
+        INTERFACE_INCLUDE_DIRECTORIES "${_vulcao_third_party_include}")
+endif()
+
+if(NOT TARGET vulcao::vma)
+    add_library(vulcao::vma INTERFACE IMPORTED)
+    set_target_properties(vulcao::vma PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${_vulcao_third_party_include}")
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/vulcaoTargets.cmake")
