@@ -1,5 +1,7 @@
 #include "vulcao/context.h"
+#include "vulcao/buffer.h"
 #include "vulcao/check.h"
+#include "vulcao/image.h"
 
 #include <iostream>
 #include <stdexcept>
@@ -28,12 +30,13 @@ Context::~Context() {
         device_.waitIdle();
 
         if (command_pool_) {
-            if (immediate_command_buffer_)
-                device_.freeCommandBuffers(command_pool_, immediate_command_buffer_);
+            immediate_command_buffer_.destroy();
             device_.destroyCommandPool(command_pool_);
         }
 
         destroy_swapchain_resources();
+
+        allocator_.destroy();
 
         if (vkb_swapchain_.swapchain)
             vkb::destroy_swapchain(vkb_swapchain_);
@@ -53,6 +56,7 @@ void Context::initialize(vk::SurfaceKHR surface, vk::Extent2D extent) {
     surface_ = surface;
     pick_physical_device();
     create_device();
+    create_allocator();
     create_swapchain({}, extent);
     create_command_pool();
 }
@@ -153,6 +157,10 @@ void Context::create_device() {
               << std::endl;
 }
 
+void Context::create_allocator() {
+    allocator_.create(instance_, physical_device_, device_, VK_API_VERSION_1_3);
+}
+
 void Context::create_swapchain(vk::SwapchainKHR oldSwapchain, vk::Extent2D extent) {
     vkb::SwapchainBuilder builder{vkb_device_, surface_};
     builder.set_desired_format(VkSurfaceFormatKHR{VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
@@ -185,14 +193,7 @@ void Context::create_command_pool() {
         .queueFamilyIndex = graphics_queue_family_index_,
     });
 
-    immediate_command_buffer_ =
-        device_
-            .allocateCommandBuffers(vk::CommandBufferAllocateInfo{
-                .commandPool = command_pool_,
-                .level = vk::CommandBufferLevel::ePrimary,
-                .commandBufferCount = 1,
-            })
-            .front();
+    immediate_command_buffer_ = CommandBuffer::allocate(device_, command_pool_);
 }
 
 void Context::destroy_swapchain_resources() {
@@ -214,6 +215,57 @@ void Context::recreate_swapchain(vk::Extent2D extent) {
     create_swapchain(swapchain_, extent);
     if (old_swapchain.swapchain)
         vkb::destroy_swapchain(old_swapchain);
+}
+
+void Context::submit_and_wait(vk::CommandBuffer cmd) {
+    vk::Fence fence = device_.createFence({});
+    graphics_queue_.submit(vk::SubmitInfo{
+                               .commandBufferCount = 1,
+                               .pCommandBuffers = &cmd,
+                           },
+                           fence);
+    check(device_.waitForFences(fence, VK_TRUE, UINT64_MAX), "wait for fence");
+    device_.destroyFence(fence);
+}
+
+void Context::upload(Buffer& dst, const void* data, vk::DeviceSize size) {
+    if (size == 0)
+        return;
+    if (!dst.valid())
+        throw std::runtime_error("Context::upload: invalid destination buffer");
+    if (!(dst.usage() & vk::BufferUsageFlagBits::eTransferDst))
+        throw std::runtime_error("Context::upload: destination buffer requires TransferDst usage");
+    if (size > dst.size())
+        throw std::runtime_error("Context::upload: data size exceeds destination buffer size");
+
+    Buffer staging = Buffer::create(allocator_, size, vk::BufferUsageFlagBits::eTransferSrc,
+                                    VMA_MEMORY_USAGE_AUTO,
+                                    VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+    staging.write_bytes(data, size);
+
+    immediate([&](CommandBuffer& cmd) {
+        cmd.copy_buffer(staging.handle(), dst.handle(), size);
+    });
+}
+
+void Context::upload(Image& dst, const void* data, vk::DeviceSize size, vk::ImageLayout final_layout) {
+    if (size == 0)
+        return;
+    if (!dst.valid())
+        throw std::runtime_error("Context::upload: invalid destination image");
+    if (!(dst.usage() & vk::ImageUsageFlagBits::eTransferDst))
+        throw std::runtime_error("Context::upload: destination image requires TransferDst usage");
+
+    Buffer staging = Buffer::create(allocator_, size, vk::BufferUsageFlagBits::eTransferSrc,
+                                    VMA_MEMORY_USAGE_AUTO,
+                                    VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+    staging.write_bytes(data, size);
+
+    immediate([&](CommandBuffer& cmd) {
+        cmd.transition(dst, vk::ImageLayout::eTransferDstOptimal);
+        cmd.copy_buffer_to_image(staging.handle(), dst);
+        cmd.transition(dst, final_layout);
+    });
 }
 
 }

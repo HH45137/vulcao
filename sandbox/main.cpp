@@ -1,13 +1,18 @@
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <exception>
 #include <iostream>
 #include <stdexcept>
+#include <vector>
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.hpp>
 
+#include "vulcao/buffer.h"
 #include "vulcao/context.h"
+#include "vulcao/image.h"
 
 namespace {
 
@@ -25,37 +30,16 @@ vk::Extent2D framebuffer_extent(GLFWwindow* window) {
     return vk::Extent2D{static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
 }
 
-void record_clear(vk::CommandBuffer cmd, vk::Image image, vk::ImageView view, vk::Extent2D extent) {
-    vk::ImageSubresourceRange range{
+void record_clear(vulcao::CommandBuffer& cmd,
+                  vk::Image image,
+                  vk::ImageView view,
+                  vk::Extent2D extent) {
+    const vk::ImageSubresourceRange range{
         .aspectMask = vk::ImageAspectFlagBits::eColor,
         .baseMipLevel = 0,
         .levelCount = 1,
         .baseArrayLayer = 0,
         .layerCount = 1,
-    };
-
-    vk::ImageMemoryBarrier2 to_color{
-        .srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe,
-        .dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-        .dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
-        .oldLayout = vk::ImageLayout::eUndefined,
-        .newLayout = vk::ImageLayout::eColorAttachmentOptimal,
-        .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-        .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
-        .image = image,
-        .subresourceRange = range,
-    };
-
-    vk::ImageMemoryBarrier2 to_present{
-        .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-        .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
-        .dstStageMask = vk::PipelineStageFlagBits2::eBottomOfPipe,
-        .oldLayout = vk::ImageLayout::eColorAttachmentOptimal,
-        .newLayout = vk::ImageLayout::ePresentSrcKHR,
-        .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-        .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
-        .image = image,
-        .subresourceRange = range,
     };
 
     vk::ClearValue clear{};
@@ -79,17 +63,14 @@ void record_clear(vk::CommandBuffer cmd, vk::Image image, vk::ImageView view, vk
         .pColorAttachments = &color_attachment,
     };
 
-    cmd.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-    cmd.pipelineBarrier2(vk::DependencyInfo{
-        .imageMemoryBarrierCount = 1,
-        .pImageMemoryBarriers = &to_color,
-    });
-    cmd.beginRendering(rendering_info);
-    cmd.endRendering();
-    cmd.pipelineBarrier2(vk::DependencyInfo{
-        .imageMemoryBarrierCount = 1,
-        .pImageMemoryBarriers = &to_present,
-    });
+    cmd.reset();
+    cmd.begin();
+    cmd.transition(image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal,
+                   range);
+    cmd.handle().beginRendering(rendering_info);
+    cmd.handle().endRendering();
+    cmd.transition(image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR,
+                   range);
     cmd.end();
 }
 
@@ -98,22 +79,22 @@ void render_clear_frame(vulcao::Context& ctx,
                         vk::Semaphore render_finished) {
     vk::Device device = ctx.device();
     vk::SwapchainKHR swapchain = ctx.swapchain();
-    vk::CommandBuffer cmd = ctx.immediate_command_buffer();
+    vulcao::CommandBuffer& cmd = ctx.immediate_command_buffer();
 
     uint32_t image_index =
         device.acquireNextImageKHR(swapchain, UINT64_MAX, image_available).value;
 
-    cmd.reset();
     record_clear(cmd, ctx.swapchain_images()[image_index],
                  ctx.swapchain_image_views()[image_index], ctx.swapchain_extent());
 
     vk::PipelineStageFlags wait_stage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+    const vk::CommandBuffer raw_cmd = cmd.handle();
     ctx.graphics_queue().submit(vk::SubmitInfo{
         .waitSemaphoreCount = 1,
         .pWaitSemaphores = &image_available,
         .pWaitDstStageMask = &wait_stage,
         .commandBufferCount = 1,
-        .pCommandBuffers = &cmd,
+        .pCommandBuffers = &raw_cmd,
         .signalSemaphoreCount = 1,
         .pSignalSemaphores = &render_finished,
     });
@@ -148,6 +129,46 @@ int main() {
     try {
         vulcao::Context ctx{"vulcao-game"};
         ctx.initialize(create_surface(ctx.instance(), window), framebuffer_extent(window));
+
+        const std::vector<uint32_t> vertex_data{0, 1, 2, 3, 4, 5};
+        const vk::DeviceSize vertex_bytes = vertex_data.size() * sizeof(uint32_t);
+
+        vulcao::Buffer vertex_buffer = vulcao::Buffer::create(
+            ctx.allocator(), vertex_bytes,
+            vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferSrc |
+                vk::BufferUsageFlagBits::eTransferDst);
+        ctx.upload(vertex_buffer, vertex_data);
+
+        vulcao::Buffer readback = vulcao::Buffer::create(
+            ctx.allocator(), vertex_bytes, vk::BufferUsageFlagBits::eTransferDst,
+            VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+        ctx.immediate([&](vulcao::CommandBuffer& cmd) {
+            cmd.copy_buffer(vertex_buffer.handle(), readback.handle(), vertex_bytes);
+        });
+
+        readback.invalidate();
+        const auto* read_data = static_cast<const uint32_t*>(readback.map());
+        const bool upload_ok = std::equal(vertex_data.begin(), vertex_data.end(), read_data);
+        readback.unmap();
+        std::cout << "vertex buffer upload: " << (upload_ok ? "ok" : "MISMATCH") << std::endl;
+
+        const std::array<uint8_t, 4> pixel{255, 128, 0, 255};
+        const vk::ImageCreateInfo image_info{
+            .imageType = vk::ImageType::e2D,
+            .format = vk::Format::eR8G8B8A8Unorm,
+            .extent = vk::Extent3D{1, 1, 1},
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = vk::SampleCountFlagBits::e1,
+            .tiling = vk::ImageTiling::eOptimal,
+            .usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
+            .sharingMode = vk::SharingMode::eExclusive,
+            .initialLayout = vk::ImageLayout::eUndefined,
+        };
+        vulcao::Image image = vulcao::Image::create(ctx.allocator(), image_info);
+        ctx.upload(image, pixel);
+        std::cout << "image upload: ok, extent=" << image.extent().width << "x" << image.extent().height
+                  << std::endl;
 
         vk::Device device = ctx.device();
         vk::Semaphore image_available = device.createSemaphore({});

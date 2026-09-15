@@ -1,0 +1,136 @@
+#include "vulcao/buffer.h"
+
+#include "vulcao/check.h"
+
+#include <stdexcept>
+#include <utility>
+
+namespace vulcao {
+
+Buffer::~Buffer() {
+    destroy();
+}
+
+Buffer::Buffer(Buffer&& other) noexcept
+    : allocator_(std::exchange(other.allocator_, nullptr)),
+      buffer_(std::exchange(other.buffer_, VK_NULL_HANDLE)),
+      allocation_(std::exchange(other.allocation_, nullptr)),
+      info_(std::exchange(other.info_, VmaAllocationInfo{})),
+      size_(std::exchange(other.size_, 0)),
+      usage_(std::exchange(other.usage_, vk::BufferUsageFlags{})),
+      mapped_data_(std::exchange(other.mapped_data_, nullptr)),
+      mapped_(std::exchange(other.mapped_, false)),
+      host_visible_(std::exchange(other.host_visible_, false)) {}
+
+Buffer& Buffer::operator=(Buffer&& other) noexcept {
+    if (this != &other) {
+        destroy();
+        allocator_ = std::exchange(other.allocator_, nullptr);
+        buffer_ = std::exchange(other.buffer_, VK_NULL_HANDLE);
+        allocation_ = std::exchange(other.allocation_, nullptr);
+        info_ = std::exchange(other.info_, VmaAllocationInfo{});
+        size_ = std::exchange(other.size_, 0);
+        usage_ = std::exchange(other.usage_, vk::BufferUsageFlags{});
+        mapped_data_ = std::exchange(other.mapped_data_, nullptr);
+        mapped_ = std::exchange(other.mapped_, false);
+        host_visible_ = std::exchange(other.host_visible_, false);
+    }
+    return *this;
+}
+
+Buffer Buffer::create(Allocator& allocator,
+                      vk::DeviceSize size,
+                      vk::BufferUsageFlags usage,
+                      VmaMemoryUsage memory_usage,
+                      VmaAllocationCreateFlags flags) {
+    if (!allocator.valid())
+        throw std::runtime_error("Buffer::create: invalid allocator");
+
+    Buffer buffer;
+    buffer.allocator_ = allocator.handle();
+
+    const vk::BufferCreateInfo create_info{
+        .size = size,
+        .usage = usage,
+        .sharingMode = vk::SharingMode::eExclusive,
+    };
+
+    VmaAllocationCreateInfo allocation_info{};
+    allocation_info.usage = memory_usage;
+    allocation_info.flags = flags;
+
+    const VkBufferCreateInfo raw_create_info = create_info;
+    check(static_cast<vk::Result>(vmaCreateBuffer(buffer.allocator_, &raw_create_info, &allocation_info,
+                                                  &buffer.buffer_, &buffer.allocation_, &buffer.info_)),
+          "create buffer");
+    buffer.size_ = size;
+    buffer.usage_ = usage;
+
+    VkMemoryPropertyFlags memory_flags = 0;
+    vmaGetMemoryTypeProperties(buffer.allocator_, buffer.info_.memoryType, &memory_flags);
+    buffer.host_visible_ = (memory_flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0;
+
+    return buffer;
+}
+
+void* Buffer::map() {
+    if (info_.pMappedData)
+        return info_.pMappedData;
+
+    if (!host_visible_)
+        throw std::runtime_error("Buffer::map: buffer is not host visible");
+
+    if (!mapped_) {
+        check(static_cast<vk::Result>(vmaMapMemory(allocator_, allocation_, &mapped_data_)), "map buffer");
+        mapped_ = true;
+    }
+    return mapped_data_;
+}
+
+void Buffer::unmap() {
+    if (mapped_) {
+        vmaUnmapMemory(allocator_, allocation_);
+        mapped_ = false;
+        mapped_data_ = nullptr;
+    }
+}
+
+void Buffer::flush(vk::DeviceSize offset, vk::DeviceSize size) {
+    check(static_cast<vk::Result>(vmaFlushAllocation(allocator_, allocation_, offset, size)), "flush buffer");
+}
+
+void Buffer::invalidate(vk::DeviceSize offset, vk::DeviceSize size) {
+    check(static_cast<vk::Result>(vmaInvalidateAllocation(allocator_, allocation_, offset, size)),
+          "invalidate buffer");
+}
+
+void Buffer::write_bytes(const void* data, vk::DeviceSize size, vk::DeviceSize offset) {
+    if (size == 0)
+        return;
+    if (offset + size > size_)
+        throw std::runtime_error("Buffer::write_bytes: out of range");
+    if (!host_visible_)
+        throw std::runtime_error("Buffer::write_bytes: buffer is not host visible, use Context::upload");
+
+    check(static_cast<vk::Result>(vmaCopyMemoryToAllocation(allocator_, data, allocation_, offset, size)),
+          "write buffer");
+}
+
+void Buffer::destroy() {
+    if (mapped_)
+        vmaUnmapMemory(allocator_, allocation_);
+    if (buffer_ != VK_NULL_HANDLE)
+        vmaDestroyBuffer(allocator_, buffer_, allocation_);
+
+    allocator_ = nullptr;
+    buffer_ = VK_NULL_HANDLE;
+    allocation_ = nullptr;
+    info_ = {};
+    size_ = 0;
+    usage_ = {};
+    mapped_data_ = nullptr;
+    mapped_ = false;
+    host_visible_ = false;
+}
+
+}

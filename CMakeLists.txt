@@ -25,7 +25,11 @@ set(GLM_BUILD_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/glm)
 
 add_library(vulcao STATIC
+    src/allocator.cpp
+    src/buffer.cpp
+    src/command_buffer.cpp
     src/context.cpp
+    src/image.cpp
     src/vma_impl.cpp
 )
 
