@@ -12,7 +12,10 @@
 
 #include "vulcao/buffer.h"
 #include "vulcao/context.h"
+#include "vulcao/fence.h"
 #include "vulcao/image.h"
+#include "vulcao/query_pool.h"
+#include "vulcao/semaphore.h"
 
 namespace {
 
@@ -67,41 +70,43 @@ void record_clear(vulcao::CommandBuffer& cmd,
     cmd.begin();
     cmd.transition(image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal,
                    range);
-    cmd.handle().beginRendering(rendering_info);
-    cmd.handle().endRendering();
+    cmd.begin_rendering(rendering_info);
+    cmd.end_rendering();
     cmd.transition(image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR,
                    range);
     cmd.end();
 }
 
 void render_clear_frame(vulcao::Context& ctx,
-                        vk::Semaphore image_available,
-                        vk::Semaphore render_finished) {
+                        const vulcao::Semaphore& image_available,
+                        const vulcao::Semaphore& render_finished) {
     vk::Device device = ctx.device();
     vk::SwapchainKHR swapchain = ctx.swapchain();
     vulcao::CommandBuffer& cmd = ctx.immediate_command_buffer();
 
     uint32_t image_index =
-        device.acquireNextImageKHR(swapchain, UINT64_MAX, image_available).value;
+        device.acquireNextImageKHR(swapchain, UINT64_MAX, image_available.handle()).value;
 
     record_clear(cmd, ctx.swapchain_images()[image_index],
                  ctx.swapchain_image_views()[image_index], ctx.swapchain_extent());
 
+    const vk::Semaphore wait_semaphore = image_available.handle();
+    const vk::Semaphore signal_semaphore = render_finished.handle();
     vk::PipelineStageFlags wait_stage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
     const vk::CommandBuffer raw_cmd = cmd.handle();
-    ctx.graphics_queue().submit(vk::SubmitInfo{
+    ctx.submit(vk::SubmitInfo{
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &image_available,
+        .pWaitSemaphores = &wait_semaphore,
         .pWaitDstStageMask = &wait_stage,
         .commandBufferCount = 1,
         .pCommandBuffers = &raw_cmd,
         .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &render_finished,
+        .pSignalSemaphores = &signal_semaphore,
     });
 
     vk::Result present_result = ctx.present_queue().presentKHR(vk::PresentInfoKHR{
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &render_finished,
+        .pWaitSemaphores = &signal_semaphore,
         .swapchainCount = 1,
         .pSwapchains = &swapchain,
         .pImageIndices = &image_index,
@@ -142,15 +147,68 @@ int main() {
         vulcao::Buffer readback = vulcao::Buffer::create(
             ctx.allocator(), vertex_bytes, vk::BufferUsageFlagBits::eTransferDst,
             VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
-        ctx.immediate([&](vulcao::CommandBuffer& cmd) {
-            cmd.copy_buffer(vertex_buffer.handle(), readback.handle(), vertex_bytes);
-        });
+
+        vulcao::CommandBuffer update_cmd =
+            vulcao::CommandBuffer::allocate(ctx.device(), ctx.command_pool());
+        update_cmd.begin();
+        update_cmd.update_buffer(readback.handle(), 0, vertex_data);
+        update_cmd.end();
+        ctx.submit_and_wait(update_cmd.handle());
 
         readback.invalidate();
-        const auto* read_data = static_cast<const uint32_t*>(readback.map());
-        const bool upload_ok = std::equal(vertex_data.begin(), vertex_data.end(), read_data);
+        bool data_ok = std::equal(vertex_data.begin(), vertex_data.end(),
+                                  static_cast<const uint32_t*>(readback.map()));
         readback.unmap();
-        std::cout << "vertex buffer upload: " << (upload_ok ? "ok" : "MISMATCH") << std::endl;
+        std::cout << "update_buffer: " << (data_ok ? "ok" : "MISMATCH") << std::endl;
+
+        vulcao::CommandBuffer secondary = vulcao::CommandBuffer::allocate(
+            ctx.device(), ctx.command_pool(), vk::CommandBufferLevel::eSecondary);
+        secondary.begin();
+        secondary.copy_buffer(vertex_buffer.handle(), readback.handle(), vertex_bytes);
+        secondary.end();
+
+        vulcao::QueryPool timestamps =
+            vulcao::QueryPool::create(ctx.device(), vk::QueryType::eTimestamp, 2);
+        vulcao::Buffer timing = vulcao::Buffer::create(
+            ctx.allocator(), 2 * sizeof(uint64_t), vk::BufferUsageFlagBits::eTransferDst,
+            VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+
+        vulcao::CommandBuffer copy_cmd =
+            vulcao::CommandBuffer::allocate(ctx.device(), ctx.command_pool());
+        copy_cmd.begin();
+        copy_cmd.fill_buffer(readback.handle(), 0, vertex_bytes, 0);
+        copy_cmd.reset_query_pool(timestamps.handle(), 0, 2);
+        copy_cmd.write_timestamp(timestamps.handle(), vk::PipelineStageFlagBits2::eTopOfPipe, 0);
+        copy_cmd.buffer_barrier(vertex_buffer.handle(),
+                                vk::PipelineStageFlagBits2::eTransfer,
+                                vk::AccessFlagBits2::eTransferWrite,
+                                vk::PipelineStageFlagBits2::eTransfer,
+                                vk::AccessFlagBits2::eTransferRead);
+        copy_cmd.execute_commands(secondary.handle());
+        copy_cmd.write_timestamp(timestamps.handle(), vk::PipelineStageFlagBits2::eBottomOfPipe, 1);
+        copy_cmd.copy_query_pool_results(
+            timestamps.handle(), 0, 2, timing.handle(), 0, sizeof(uint64_t),
+            vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
+        copy_cmd.end();
+
+        vulcao::Fence copy_done = vulcao::Fence::create(ctx.device());
+        ctx.submit(copy_cmd.handle(), copy_done.handle());
+        std::cout << "copy submitted, doing CPU work while the GPU copies..." << std::endl;
+        copy_done.wait();
+
+        readback.invalidate();
+        data_ok = std::equal(vertex_data.begin(), vertex_data.end(),
+                             static_cast<const uint32_t*>(readback.map()));
+        readback.unmap();
+        std::cout << "fill + secondary + execute_commands: " << (data_ok ? "ok" : "MISMATCH")
+                  << std::endl;
+
+        timing.invalidate();
+        const auto* stamp = static_cast<const uint64_t*>(timing.map());
+        const float period = ctx.physical_device().getProperties().limits.timestampPeriod;
+        std::cout << "copy time: " << static_cast<double>(stamp[1] - stamp[0]) * period << " ns"
+                  << std::endl;
+        timing.unmap();
 
         const std::array<uint8_t, 4> pixel{255, 128, 0, 255};
         const vk::ImageCreateInfo image_info{
@@ -161,18 +219,46 @@ int main() {
             .arrayLayers = 1,
             .samples = vk::SampleCountFlagBits::e1,
             .tiling = vk::ImageTiling::eOptimal,
-            .usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
+            .usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc |
+                     vk::ImageUsageFlagBits::eTransferDst,
             .sharingMode = vk::SharingMode::eExclusive,
             .initialLayout = vk::ImageLayout::eUndefined,
         };
         vulcao::Image image = vulcao::Image::create(ctx.allocator(), image_info);
         ctx.upload(image, pixel);
-        std::cout << "image upload: ok, extent=" << image.extent().width << "x" << image.extent().height
-                  << std::endl;
+
+        const uint32_t clear_value = 0x11223344u;
+        vk::ClearColorValue clear_color{};
+        clear_color.float32[0] = 68.0f / 255.0f;
+        clear_color.float32[1] = 51.0f / 255.0f;
+        clear_color.float32[2] = 34.0f / 255.0f;
+        clear_color.float32[3] = 17.0f / 255.0f;
+
+        vulcao::Buffer pixel_readback = vulcao::Buffer::create(
+            ctx.allocator(), sizeof(uint32_t), vk::BufferUsageFlagBits::eTransferDst,
+            VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+
+        vulcao::CommandBuffer clear_cmd =
+            vulcao::CommandBuffer::allocate(ctx.device(), ctx.command_pool());
+        clear_cmd.begin();
+        clear_cmd.transition(image, vk::ImageLayout::eTransferDstOptimal);
+        clear_cmd.clear_color_image(image, clear_color);
+        clear_cmd.transition(image, vk::ImageLayout::eTransferSrcOptimal);
+        clear_cmd.copy_image_to_buffer(pixel_readback.handle(), image);
+        clear_cmd.end();
+        ctx.submit_and_wait(clear_cmd.handle());
+
+        pixel_readback.invalidate();
+        const uint32_t read_value = *static_cast<const uint32_t*>(pixel_readback.map());
+        pixel_readback.unmap();
+        const bool clear_ok = read_value == clear_value;
+        std::cout << "clear_color_image + copy_image_to_buffer: " << (clear_ok ? "ok" : "MISMATCH")
+                  << " (read 0x" << std::hex << read_value << ", expected 0x" << clear_value << std::dec
+                  << ")" << std::endl;
 
         vk::Device device = ctx.device();
-        vk::Semaphore image_available = device.createSemaphore({});
-        vk::Semaphore render_finished = device.createSemaphore({});
+        vulcao::Semaphore image_available = vulcao::Semaphore::create(device);
+        vulcao::Semaphore render_finished = vulcao::Semaphore::create(device);
 
         auto redraw = [&]() {
             try {
@@ -209,8 +295,6 @@ int main() {
         }
 
         device.waitIdle();
-        device.destroySemaphore(image_available);
-        device.destroySemaphore(render_finished);
     } catch (const std::exception& e) {
         std::cerr << "fatal: " << e.what() << std::endl;
         glfwDestroyWindow(window);

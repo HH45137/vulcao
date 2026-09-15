@@ -31,6 +31,7 @@ Context::~Context() {
 
         if (command_pool_) {
             immediate_command_buffer_.destroy();
+            submit_fence_.destroy();
             device_.destroyCommandPool(command_pool_);
         }
 
@@ -194,6 +195,7 @@ void Context::create_command_pool() {
     });
 
     immediate_command_buffer_ = CommandBuffer::allocate(device_, command_pool_);
+    submit_fence_ = Fence::create(device_);
 }
 
 void Context::destroy_swapchain_resources() {
@@ -218,14 +220,27 @@ void Context::recreate_swapchain(vk::Extent2D extent) {
 }
 
 void Context::submit_and_wait(vk::CommandBuffer cmd) {
-    vk::Fence fence = device_.createFence({});
-    graphics_queue_.submit(vk::SubmitInfo{
-                               .commandBufferCount = 1,
-                               .pCommandBuffers = &cmd,
-                           },
-                           fence);
-    check(device_.waitForFences(fence, VK_TRUE, UINT64_MAX), "wait for fence");
-    device_.destroyFence(fence);
+    submit_fence_.reset();
+    submit(cmd, submit_fence_.handle());
+    submit_fence_.wait();
+}
+
+void Context::submit(const vk::SubmitInfo& info, vk::Fence fence) {
+    graphics_queue_.submit(info, fence);
+}
+
+void Context::submit(vk::CommandBuffer cmd, vk::Fence fence) {
+    submit(vk::SubmitInfo{
+               .commandBufferCount = 1,
+               .pCommandBuffers = &cmd,
+           },
+           fence);
+}
+
+Fence Context::submit(vk::CommandBuffer cmd) {
+    Fence fence = Fence::create(device_);
+    submit(cmd, fence.handle());
+    return fence;
 }
 
 void Context::upload(Buffer& dst, const void* data, vk::DeviceSize size) {

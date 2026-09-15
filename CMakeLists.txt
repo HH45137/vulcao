@@ -29,7 +29,10 @@ add_library(vulcao STATIC
     src/buffer.cpp
     src/command_buffer.cpp
     src/context.cpp
+    src/fence.cpp
     src/image.cpp
+    src/query_pool.cpp
+    src/semaphore.cpp
     src/vma_impl.cpp
 )
 

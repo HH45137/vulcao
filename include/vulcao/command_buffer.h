@@ -1,9 +1,14 @@
 #pragma once
 
+#include <cstdint>
+#include <ranges>
+#include <type_traits>
+
 #include <vulkan/vulkan.hpp>
 
 namespace vulcao {
 
+class Buffer;
 class Image;
 
 /// @brief RAII wrapper around a Vulkan command buffer with recording helpers.
@@ -43,6 +48,9 @@ public:
     /// @brief Returns the raw Vulkan command buffer handle.
     vk::CommandBuffer handle() const { return cmd_; }
 
+    /// @brief Returns the level the command buffer was allocated with.
+    vk::CommandBufferLevel level() const { return level_; }
+
     /// @brief Frees the command buffer and resets the wrapper.
     void destroy();
 
@@ -51,10 +59,17 @@ public:
     /// @return This command buffer.
     CommandBuffer& reset(vk::CommandBufferResetFlags flags = {});
 
-    /// @brief Starts recording.
+    /// @brief Starts recording. Secondary command buffers get default inheritance info.
     /// @param flags Usage flags for the recording.
     /// @return This command buffer.
     CommandBuffer& begin(vk::CommandBufferUsageFlags flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
+
+    /// @brief Starts recording with explicit inheritance info.
+    /// @param inheritance Inheritance info for the recording.
+    /// @param flags Usage flags for the recording.
+    /// @return This command buffer.
+    CommandBuffer& begin(const vk::CommandBufferInheritanceInfo& inheritance,
+                         vk::CommandBufferUsageFlags flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
 
     /// @brief Stops recording.
     /// @return This command buffer.
@@ -70,6 +85,23 @@ public:
                            vk::AccessFlags2 src_access,
                            vk::PipelineStageFlags2 dst_stage,
                            vk::AccessFlags2 dst_access);
+
+    /// @brief Inserts a buffer memory barrier.
+    /// @param buffer Buffer to synchronize.
+    /// @param src_stage Source pipeline stages.
+    /// @param src_access Source access flags.
+    /// @param dst_stage Destination pipeline stages.
+    /// @param dst_access Destination access flags.
+    /// @param offset Byte offset of the range.
+    /// @param size Size of the range, or VK_WHOLE_SIZE.
+    /// @return This command buffer.
+    CommandBuffer& buffer_barrier(vk::Buffer buffer,
+                                  vk::PipelineStageFlags2 src_stage,
+                                  vk::AccessFlags2 src_access,
+                                  vk::PipelineStageFlags2 dst_stage,
+                                  vk::AccessFlags2 dst_access,
+                                  vk::DeviceSize offset = 0,
+                                  vk::DeviceSize size = VK_WHOLE_SIZE);
 
     /// @brief Transitions an image layout using raw handles.
     /// @param image Image to transition.
@@ -162,10 +194,311 @@ public:
                                         const Image& src,
                                         vk::Offset3D offset = vk::Offset3D{0, 0, 0});
 
+    /// @brief Copies one image into another using raw handles.
+    /// @param src Source image.
+    /// @param src_layout Layout of the source image.
+    /// @param dst Destination image.
+    /// @param dst_layout Layout of the destination image.
+    /// @param region Region to copy.
+    /// @return This command buffer.
+    CommandBuffer& copy_image(vk::Image src,
+                              vk::ImageLayout src_layout,
+                              vk::Image dst,
+                              vk::ImageLayout dst_layout,
+                              const vk::ImageCopy& region);
+
+    /// @brief Blits one image into another using raw handles.
+    /// @param src Source image.
+    /// @param src_layout Layout of the source image.
+    /// @param dst Destination image.
+    /// @param dst_layout Layout of the destination image.
+    /// @param region Region to blit.
+    /// @param filter Filter used when scaling.
+    /// @return This command buffer.
+    CommandBuffer& blit_image(vk::Image src,
+                              vk::ImageLayout src_layout,
+                              vk::Image dst,
+                              vk::ImageLayout dst_layout,
+                              const vk::ImageBlit& region,
+                              vk::Filter filter = vk::Filter::eLinear);
+
+    /// @brief Clears a color image using raw handles.
+    /// @param image Image to clear.
+    /// @param layout Layout of the image.
+    /// @param color Clear color.
+    /// @param range Subresource range to clear.
+    /// @return This command buffer.
+    CommandBuffer& clear_color_image(vk::Image image,
+                                     vk::ImageLayout layout,
+                                     const vk::ClearColorValue& color,
+                                     const vk::ImageSubresourceRange& range);
+
+    /// @brief Clears a color image using its tracked layout and range.
+    /// @param image Image to clear.
+    /// @param color Clear color.
+    /// @return This command buffer.
+    CommandBuffer& clear_color_image(const Image& image, const vk::ClearColorValue& color);
+
+    /// @brief Clears a depth-stencil image using raw handles.
+    /// @param image Image to clear.
+    /// @param layout Layout of the image.
+    /// @param depth_stencil Clear depth and stencil values.
+    /// @param range Subresource range to clear.
+    /// @return This command buffer.
+    CommandBuffer& clear_depth_stencil_image(vk::Image image,
+                                             vk::ImageLayout layout,
+                                             const vk::ClearDepthStencilValue& depth_stencil,
+                                             const vk::ImageSubresourceRange& range);
+
+    /// @brief Clears a depth-stencil image using its tracked layout and range.
+    /// @param image Image to clear.
+    /// @param depth_stencil Clear depth and stencil values.
+    /// @return This command buffer.
+    CommandBuffer& clear_depth_stencil_image(const Image& image,
+                                             const vk::ClearDepthStencilValue& depth_stencil);
+
+    /// @brief Executes the recorded commands of a secondary command buffer.
+    /// @param cmd Secondary command buffer to execute.
+    /// @return This command buffer.
+    CommandBuffer& execute_commands(vk::CommandBuffer cmd);
+
+    /// @brief Fills a buffer range with a 32 bit value.
+    /// @param dst Destination buffer.
+    /// @param offset Byte offset of the range, must be a multiple of 4.
+    /// @param size Size of the range in bytes, must be a multiple of 4.
+    /// @param data Value written to the range.
+    /// @return This command buffer.
+    CommandBuffer& fill_buffer(vk::Buffer dst, vk::DeviceSize offset, vk::DeviceSize size, uint32_t data);
+
+    /// @brief Copies raw bytes into a buffer from host memory.
+    /// @param dst Destination buffer.
+    /// @param offset Byte offset in the destination.
+    /// @param data Source pointer.
+    /// @param size Number of bytes to copy, at most 65536.
+    /// @return This command buffer.
+    CommandBuffer& update_buffer(vk::Buffer dst, vk::DeviceSize offset, const void* data, vk::DeviceSize size);
+
+    /// @brief Copies a contiguous range into a buffer from host memory.
+    /// @param dst Destination buffer.
+    /// @param offset Byte offset in the destination.
+    /// @param data Source range, at most 65536 bytes.
+    /// @return This command buffer.
+    template <typename Container>
+        requires std::ranges::contiguous_range<Container>
+    CommandBuffer& update_buffer(vk::Buffer dst, vk::DeviceSize offset, const Container& data) {
+        using T = std::ranges::range_value_t<Container>;
+        static_assert(std::is_trivially_copyable_v<T>, "buffer data must be trivially copyable");
+        return update_buffer(dst,
+                             offset,
+                             std::ranges::data(data),
+                             static_cast<vk::DeviceSize>(std::ranges::size(data)) * sizeof(T));
+    }
+
+    /// @brief Binds a pipeline.
+    /// @param bind_point Pipeline bind point.
+    /// @param pipeline Pipeline to bind.
+    /// @return This command buffer.
+    CommandBuffer& bind_pipeline(vk::PipelineBindPoint bind_point, vk::Pipeline pipeline);
+
+    /// @brief Binds one vertex buffer.
+    /// @param binding Vertex binding index.
+    /// @param buffer Vertex buffer to bind.
+    /// @param offset Byte offset in the buffer.
+    /// @return This command buffer.
+    CommandBuffer& bind_vertex_buffer(uint32_t binding, const Buffer& buffer, vk::DeviceSize offset = 0);
+
+    /// @brief Binds several vertex buffers.
+    /// @param first_binding First vertex binding index.
+    /// @param buffers Vertex buffers to bind.
+    /// @param offsets Byte offsets of each buffer.
+    /// @return This command buffer.
+    CommandBuffer& bind_vertex_buffers(uint32_t first_binding,
+                                       vk::ArrayProxy<const vk::Buffer> buffers,
+                                       vk::ArrayProxy<const vk::DeviceSize> offsets);
+
+    /// @brief Binds the index buffer.
+    /// @param buffer Index buffer to bind.
+    /// @param offset Byte offset in the buffer.
+    /// @param index_type Type of the indices.
+    /// @return This command buffer.
+    CommandBuffer& bind_index_buffer(const Buffer& buffer, vk::DeviceSize offset, vk::IndexType index_type);
+
+    /// @brief Sets one viewport at index 0.
+    /// @param viewport Viewport to set.
+    /// @return This command buffer.
+    CommandBuffer& set_viewport(const vk::Viewport& viewport);
+
+    /// @brief Sets a full extent viewport at index 0.
+    /// @param extent Width and height of the viewport.
+    /// @return This command buffer.
+    CommandBuffer& set_viewport(vk::Extent2D extent);
+
+    /// @brief Sets one scissor at index 0.
+    /// @param scissor Scissor rectangle to set.
+    /// @return This command buffer.
+    CommandBuffer& set_scissor(const vk::Rect2D& scissor);
+
+    /// @brief Sets a full extent scissor at index 0.
+    /// @param extent Width and height of the scissor.
+    /// @return This command buffer.
+    CommandBuffer& set_scissor(vk::Extent2D extent);
+
+    /// @brief Pushes raw constant data to the pipeline layout.
+    /// @param layout Pipeline layout.
+    /// @param stages Shader stages that read the constants.
+    /// @param offset Byte offset in the push constant range.
+    /// @param data Source pointer.
+    /// @param size Number of bytes to push.
+    /// @return This command buffer.
+    CommandBuffer& push_constants(vk::PipelineLayout layout,
+                                  vk::ShaderStageFlags stages,
+                                  uint32_t offset,
+                                  const void* data,
+                                  uint32_t size);
+
+    /// @brief Pushes one trivially copyable value to the pipeline layout.
+    /// @param layout Pipeline layout.
+    /// @param stages Shader stages that read the constants.
+    /// @param offset Byte offset in the push constant range.
+    /// @param value Value to push.
+    /// @return This command buffer.
+    template <typename T>
+    CommandBuffer& push_constants(vk::PipelineLayout layout,
+                                  vk::ShaderStageFlags stages,
+                                  uint32_t offset,
+                                  const T& value) {
+        static_assert(std::is_trivially_copyable_v<T>, "push constant data must be trivially copyable");
+        return push_constants(layout, stages, offset, &value, static_cast<uint32_t>(sizeof(T)));
+    }
+
+    /// @brief Records a draw call.
+    /// @param vertex_count Number of vertices.
+    /// @param instance_count Number of instances.
+    /// @param first_vertex Index of the first vertex.
+    /// @param first_instance Index of the first instance.
+    /// @return This command buffer.
+    CommandBuffer& draw(uint32_t vertex_count,
+                        uint32_t instance_count = 1,
+                        uint32_t first_vertex = 0,
+                        uint32_t first_instance = 0);
+
+    /// @brief Records an indexed draw call.
+    /// @param index_count Number of indices.
+    /// @param instance_count Number of instances.
+    /// @param first_index Index of the first index.
+    /// @param vertex_offset Value added to each index.
+    /// @param first_instance Index of the first instance.
+    /// @return This command buffer.
+    CommandBuffer& draw_indexed(uint32_t index_count,
+                                uint32_t instance_count = 1,
+                                uint32_t first_index = 0,
+                                int32_t vertex_offset = 0,
+                                uint32_t first_instance = 0);
+
+    /// @brief Records an indirect draw call.
+    /// @param buffer Buffer holding the draw parameters.
+    /// @param offset Byte offset of the draw parameters.
+    /// @param draw_count Number of draws.
+    /// @param stride Byte stride between draw parameters.
+    /// @return This command buffer.
+    CommandBuffer& draw_indirect(vk::Buffer buffer,
+                                 vk::DeviceSize offset,
+                                 uint32_t draw_count,
+                                 uint32_t stride);
+
+    /// @brief Records an indirect indexed draw call.
+    /// @param buffer Buffer holding the draw parameters.
+    /// @param offset Byte offset of the draw parameters.
+    /// @param draw_count Number of draws.
+    /// @param stride Byte stride between draw parameters.
+    /// @return This command buffer.
+    CommandBuffer& draw_indexed_indirect(vk::Buffer buffer,
+                                         vk::DeviceSize offset,
+                                         uint32_t draw_count,
+                                         uint32_t stride);
+
+    /// @brief Begins dynamic rendering.
+    /// @param info Rendering parameters.
+    /// @return This command buffer.
+    CommandBuffer& begin_rendering(const vk::RenderingInfo& info);
+
+    /// @brief Ends dynamic rendering.
+    /// @return This command buffer.
+    CommandBuffer& end_rendering();
+
+    /// @brief Binds descriptor sets.
+    /// @param bind_point Pipeline bind point.
+    /// @param layout Pipeline layout.
+    /// @param descriptor_sets Descriptor sets to bind, starting at set 0.
+    /// @param dynamic_offsets Dynamic offsets for the sets.
+    /// @return This command buffer.
+    CommandBuffer& bind_descriptor_sets(vk::PipelineBindPoint bind_point,
+                                        vk::PipelineLayout layout,
+                                        vk::ArrayProxy<const vk::DescriptorSet> descriptor_sets,
+                                        vk::ArrayProxy<const uint32_t> dynamic_offsets = {});
+
+    /// @brief Records a compute dispatch.
+    /// @param group_count_x Number of groups in X.
+    /// @param group_count_y Number of groups in Y.
+    /// @param group_count_z Number of groups in Z.
+    /// @return This command buffer.
+    CommandBuffer& dispatch(uint32_t group_count_x, uint32_t group_count_y = 1, uint32_t group_count_z = 1);
+
+    /// @brief Records an indirect compute dispatch.
+    /// @param buffer Buffer holding the dispatch parameters.
+    /// @param offset Byte offset of the dispatch parameters.
+    /// @return This command buffer.
+    CommandBuffer& dispatch_indirect(vk::Buffer buffer, vk::DeviceSize offset);
+
+    /// @brief Resets a range of queries.
+    /// @param pool Query pool.
+    /// @param first_query First query to reset.
+    /// @param query_count Number of queries to reset.
+    /// @return This command buffer.
+    CommandBuffer& reset_query_pool(vk::QueryPool pool, uint32_t first_query, uint32_t query_count);
+
+    /// @brief Writes a timestamp query.
+    /// @param pool Query pool.
+    /// @param stage Pipeline stage the timestamp is written at.
+    /// @param query Query index.
+    /// @return This command buffer.
+    CommandBuffer& write_timestamp(vk::QueryPool pool, vk::PipelineStageFlags2 stage, uint32_t query);
+
+    /// @brief Begins a query.
+    /// @param pool Query pool.
+    /// @param query Query index.
+    /// @param flags Query control flags.
+    /// @return This command buffer.
+    CommandBuffer& begin_query(vk::QueryPool pool, uint32_t query, vk::QueryControlFlags flags = {});
+
+    /// @brief Ends a query.
+    /// @param pool Query pool.
+    /// @param query Query index.
+    /// @return This command buffer.
+    CommandBuffer& end_query(vk::QueryPool pool, uint32_t query);
+
+    /// @brief Copies query results into a buffer.
+    /// @param pool Query pool.
+    /// @param first_query First query to copy.
+    /// @param query_count Number of queries to copy.
+    /// @param dst Destination buffer.
+    /// @param dst_offset Byte offset in the destination.
+    /// @param stride Byte stride between results.
+    /// @param flags Query result flags.
+    /// @return This command buffer.
+    CommandBuffer& copy_query_pool_results(vk::QueryPool pool,
+                                           uint32_t first_query,
+                                           uint32_t query_count,
+                                           vk::Buffer dst,
+                                           vk::DeviceSize dst_offset,
+                                           vk::DeviceSize stride,
+                                           vk::QueryResultFlags flags);
+
 private:
     vk::Device device_;
     vk::CommandPool pool_;
     vk::CommandBuffer cmd_;
+    vk::CommandBufferLevel level_ = vk::CommandBufferLevel::ePrimary;
 };
 
 }

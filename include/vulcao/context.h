@@ -10,6 +10,7 @@
 
 #include "vulcao/allocator.h"
 #include "vulcao/command_buffer.h"
+#include "vulcao/fence.h"
 
 namespace vulcao {
 
@@ -48,6 +49,21 @@ public:
     /// @brief Submits a command buffer on the graphics queue and waits for it.
     /// @param cmd Command buffer to submit.
     void submit_and_wait(vk::CommandBuffer cmd);
+
+    /// @brief Submits commands on the graphics queue without waiting.
+    /// @param info Submission parameters.
+    /// @param fence Optional fence signaled when the submission completes.
+    void submit(const vk::SubmitInfo& info, vk::Fence fence = {});
+
+    /// @brief Submits a command buffer on the graphics queue without waiting.
+    /// @param cmd Command buffer to submit.
+    /// @param fence Fence signaled when the submission completes.
+    void submit(vk::CommandBuffer cmd, vk::Fence fence);
+
+    /// @brief Submits a command buffer on the graphics queue without waiting.
+    /// @param cmd Command buffer to submit.
+    /// @return A new fence signaled when the submission completes.
+    Fence submit(vk::CommandBuffer cmd);
 
     /// @brief Records one-time commands with the internal command buffer, submits and waits.
     /// @param fn Callable that records commands, invoked with a CommandBuffer reference.
@@ -205,6 +221,7 @@ private:
 
     vk::CommandPool command_pool_;
     CommandBuffer immediate_command_buffer_;
+    Fence submit_fence_;
 };
 
 }

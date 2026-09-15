@@ -1,7 +1,9 @@
 #include "vulcao/command_buffer.h"
 
+#include "vulcao/buffer.h"
 #include "vulcao/image.h"
 
+#include <stdexcept>
 #include <utility>
 
 namespace vulcao {
@@ -66,7 +68,8 @@ CommandBuffer::~CommandBuffer() {
 CommandBuffer::CommandBuffer(CommandBuffer&& other) noexcept
     : device_(std::exchange(other.device_, vk::Device{})),
       pool_(std::exchange(other.pool_, vk::CommandPool{})),
-      cmd_(std::exchange(other.cmd_, vk::CommandBuffer{})) {}
+      cmd_(std::exchange(other.cmd_, vk::CommandBuffer{})),
+      level_(std::exchange(other.level_, vk::CommandBufferLevel::ePrimary)) {}
 
 CommandBuffer& CommandBuffer::operator=(CommandBuffer&& other) noexcept {
     if (this != &other) {
@@ -74,6 +77,7 @@ CommandBuffer& CommandBuffer::operator=(CommandBuffer&& other) noexcept {
         device_ = std::exchange(other.device_, vk::Device{});
         pool_ = std::exchange(other.pool_, vk::CommandPool{});
         cmd_ = std::exchange(other.cmd_, vk::CommandBuffer{});
+        level_ = std::exchange(other.level_, vk::CommandBufferLevel::ePrimary);
     }
     return *this;
 }
@@ -84,6 +88,7 @@ CommandBuffer CommandBuffer::allocate(vk::Device device,
     CommandBuffer command_buffer;
     command_buffer.device_ = device;
     command_buffer.pool_ = pool;
+    command_buffer.level_ = level;
     command_buffer.cmd_ = device
                               .allocateCommandBuffers(vk::CommandBufferAllocateInfo{
                                   .commandPool = pool,
@@ -101,6 +106,7 @@ void CommandBuffer::destroy() {
     device_ = nullptr;
     pool_ = nullptr;
     cmd_ = nullptr;
+    level_ = vk::CommandBufferLevel::ePrimary;
 }
 
 CommandBuffer& CommandBuffer::reset(vk::CommandBufferResetFlags flags) {
@@ -109,7 +115,25 @@ CommandBuffer& CommandBuffer::reset(vk::CommandBufferResetFlags flags) {
 }
 
 CommandBuffer& CommandBuffer::begin(vk::CommandBufferUsageFlags flags) {
+    if (level_ == vk::CommandBufferLevel::eSecondary) {
+        const vk::CommandBufferInheritanceInfo inheritance{};
+        cmd_.begin(vk::CommandBufferBeginInfo{
+            .flags = flags,
+            .pInheritanceInfo = &inheritance,
+        });
+        return *this;
+    }
+
     cmd_.begin(vk::CommandBufferBeginInfo{.flags = flags});
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::begin(const vk::CommandBufferInheritanceInfo& inheritance,
+                                    vk::CommandBufferUsageFlags flags) {
+    cmd_.begin(vk::CommandBufferBeginInfo{
+        .flags = flags,
+        .pInheritanceInfo = &inheritance,
+    });
     return *this;
 }
 
@@ -132,6 +156,32 @@ CommandBuffer& CommandBuffer::barrier(vk::PipelineStageFlags2 src_stage,
     cmd_.pipelineBarrier2(vk::DependencyInfo{
         .memoryBarrierCount = 1,
         .pMemoryBarriers = &memory_barrier,
+    });
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::buffer_barrier(vk::Buffer buffer,
+                                             vk::PipelineStageFlags2 src_stage,
+                                             vk::AccessFlags2 src_access,
+                                             vk::PipelineStageFlags2 dst_stage,
+                                             vk::AccessFlags2 dst_access,
+                                             vk::DeviceSize offset,
+                                             vk::DeviceSize size) {
+    const vk::BufferMemoryBarrier2 buffer_memory_barrier{
+        .srcStageMask = src_stage,
+        .srcAccessMask = src_access,
+        .dstStageMask = dst_stage,
+        .dstAccessMask = dst_access,
+        .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+        .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+        .buffer = buffer,
+        .offset = offset,
+        .size = size,
+    };
+
+    cmd_.pipelineBarrier2(vk::DependencyInfo{
+        .bufferMemoryBarrierCount = 1,
+        .pBufferMemoryBarriers = &buffer_memory_barrier,
     });
     return *this;
 }
@@ -246,6 +296,237 @@ CommandBuffer& CommandBuffer::copy_image_to_buffer(vk::Buffer dst,
                                                    vk::Offset3D offset) {
     return copy_image_to_buffer(dst, src.handle(), src.extent(),
                                 single_layer(src.subresource_range()), offset);
+}
+
+CommandBuffer& CommandBuffer::copy_image(vk::Image src,
+                                         vk::ImageLayout src_layout,
+                                         vk::Image dst,
+                                         vk::ImageLayout dst_layout,
+                                         const vk::ImageCopy& region) {
+    cmd_.copyImage(src, src_layout, dst, dst_layout, region);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::blit_image(vk::Image src,
+                                         vk::ImageLayout src_layout,
+                                         vk::Image dst,
+                                         vk::ImageLayout dst_layout,
+                                         const vk::ImageBlit& region,
+                                         vk::Filter filter) {
+    cmd_.blitImage(src, src_layout, dst, dst_layout, region, filter);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::clear_color_image(vk::Image image,
+                                                vk::ImageLayout layout,
+                                                const vk::ClearColorValue& color,
+                                                const vk::ImageSubresourceRange& range) {
+    cmd_.clearColorImage(image, layout, color, range);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::clear_color_image(const Image& image, const vk::ClearColorValue& color) {
+    return clear_color_image(image.handle(), image.layout(), color, image.subresource_range());
+}
+
+CommandBuffer& CommandBuffer::clear_depth_stencil_image(vk::Image image,
+                                                        vk::ImageLayout layout,
+                                                        const vk::ClearDepthStencilValue& depth_stencil,
+                                                        const vk::ImageSubresourceRange& range) {
+    cmd_.clearDepthStencilImage(image, layout, depth_stencil, range);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::clear_depth_stencil_image(const Image& image,
+                                                        const vk::ClearDepthStencilValue& depth_stencil) {
+    return clear_depth_stencil_image(image.handle(), image.layout(), depth_stencil,
+                                     image.subresource_range());
+}
+
+CommandBuffer& CommandBuffer::execute_commands(vk::CommandBuffer cmd) {
+    cmd_.executeCommands(cmd);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::fill_buffer(vk::Buffer dst,
+                                          vk::DeviceSize offset,
+                                          vk::DeviceSize size,
+                                          uint32_t data) {
+    if (size == 0 || offset % 4 != 0 || size % 4 != 0)
+        throw std::runtime_error("CommandBuffer::fill_buffer: size must be non-zero and offset and size must be multiples of 4");
+
+    cmd_.fillBuffer(dst, offset, size, data);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::update_buffer(vk::Buffer dst,
+                                            vk::DeviceSize offset,
+                                            const void* data,
+                                            vk::DeviceSize size) {
+    if (size == 0 || size % 4 != 0 || size > 65536)
+        throw std::runtime_error("CommandBuffer::update_buffer: size must be a non-zero multiple of 4 and at most 65536 bytes");
+
+    cmd_.updateBuffer(dst, offset, size, data);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::bind_pipeline(vk::PipelineBindPoint bind_point, vk::Pipeline pipeline) {
+    cmd_.bindPipeline(bind_point, pipeline);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::bind_vertex_buffer(uint32_t binding,
+                                                 const Buffer& buffer,
+                                                 vk::DeviceSize offset) {
+    const vk::Buffer raw_buffer = buffer.handle();
+    cmd_.bindVertexBuffers(binding, raw_buffer, offset);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::bind_vertex_buffers(uint32_t first_binding,
+                                                  vk::ArrayProxy<const vk::Buffer> buffers,
+                                                  vk::ArrayProxy<const vk::DeviceSize> offsets) {
+    cmd_.bindVertexBuffers(first_binding, buffers, offsets);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::bind_index_buffer(const Buffer& buffer,
+                                                vk::DeviceSize offset,
+                                                vk::IndexType index_type) {
+    cmd_.bindIndexBuffer(buffer.handle(), offset, index_type);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::set_viewport(const vk::Viewport& viewport) {
+    cmd_.setViewport(0, viewport);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::set_viewport(vk::Extent2D extent) {
+    return set_viewport(vk::Viewport{
+        .x = 0.0f,
+        .y = 0.0f,
+        .width = static_cast<float>(extent.width),
+        .height = static_cast<float>(extent.height),
+        .minDepth = 0.0f,
+        .maxDepth = 1.0f,
+    });
+}
+
+CommandBuffer& CommandBuffer::set_scissor(const vk::Rect2D& scissor) {
+    cmd_.setScissor(0, scissor);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::set_scissor(vk::Extent2D extent) {
+    return set_scissor(vk::Rect2D{.offset = vk::Offset2D{0, 0}, .extent = extent});
+}
+
+CommandBuffer& CommandBuffer::push_constants(vk::PipelineLayout layout,
+                                             vk::ShaderStageFlags stages,
+                                             uint32_t offset,
+                                             const void* data,
+                                             uint32_t size) {
+    cmd_.pushConstants(layout, stages, offset, size, data);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::draw(uint32_t vertex_count,
+                                   uint32_t instance_count,
+                                   uint32_t first_vertex,
+                                   uint32_t first_instance) {
+    cmd_.draw(vertex_count, instance_count, first_vertex, first_instance);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::draw_indexed(uint32_t index_count,
+                                           uint32_t instance_count,
+                                           uint32_t first_index,
+                                           int32_t vertex_offset,
+                                           uint32_t first_instance) {
+    cmd_.drawIndexed(index_count, instance_count, first_index, vertex_offset, first_instance);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::draw_indirect(vk::Buffer buffer,
+                                            vk::DeviceSize offset,
+                                            uint32_t draw_count,
+                                            uint32_t stride) {
+    cmd_.drawIndirect(buffer, offset, draw_count, stride);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::draw_indexed_indirect(vk::Buffer buffer,
+                                                    vk::DeviceSize offset,
+                                                    uint32_t draw_count,
+                                                    uint32_t stride) {
+    cmd_.drawIndexedIndirect(buffer, offset, draw_count, stride);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::begin_rendering(const vk::RenderingInfo& info) {
+    cmd_.beginRendering(info);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::end_rendering() {
+    cmd_.endRendering();
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::bind_descriptor_sets(vk::PipelineBindPoint bind_point,
+                                                   vk::PipelineLayout layout,
+                                                   vk::ArrayProxy<const vk::DescriptorSet> descriptor_sets,
+                                                   vk::ArrayProxy<const uint32_t> dynamic_offsets) {
+    cmd_.bindDescriptorSets(bind_point, layout, 0, descriptor_sets, dynamic_offsets);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::dispatch(uint32_t group_count_x,
+                                       uint32_t group_count_y,
+                                       uint32_t group_count_z) {
+    cmd_.dispatch(group_count_x, group_count_y, group_count_z);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::dispatch_indirect(vk::Buffer buffer, vk::DeviceSize offset) {
+    cmd_.dispatchIndirect(buffer, offset);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::reset_query_pool(vk::QueryPool pool,
+                                               uint32_t first_query,
+                                               uint32_t query_count) {
+    cmd_.resetQueryPool(pool, first_query, query_count);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::write_timestamp(vk::QueryPool pool,
+                                              vk::PipelineStageFlags2 stage,
+                                              uint32_t query) {
+    cmd_.writeTimestamp2(stage, pool, query);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::begin_query(vk::QueryPool pool, uint32_t query, vk::QueryControlFlags flags) {
+    cmd_.beginQuery(pool, query, flags);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::end_query(vk::QueryPool pool, uint32_t query) {
+    cmd_.endQuery(pool, query);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::copy_query_pool_results(vk::QueryPool pool,
+                                                      uint32_t first_query,
+                                                      uint32_t query_count,
+                                                      vk::Buffer dst,
+                                                      vk::DeviceSize dst_offset,
+                                                      vk::DeviceSize stride,
+                                                      vk::QueryResultFlags flags) {
+    cmd_.copyQueryPoolResults(pool, first_query, query_count, dst, dst_offset, stride, flags);
+    return *this;
 }
 
 }
