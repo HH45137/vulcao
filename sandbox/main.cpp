@@ -219,8 +219,10 @@ int main() {
     }
 
     try {
-        vulcao::Context ctx{"vulcao-game"};
-        ctx.initialize(create_surface(ctx.instance(), window), framebuffer_extent(window));
+        vulcao::Context ctx{{.app_name = "vulcao-game"}};
+        ctx.initialize(create_surface(ctx.instance(), window), framebuffer_extent(window),
+                       vulcao::SwapchainInfo{
+                           .extra_usage = vk::ImageUsageFlagBits::eTransferSrc});
 
         run_compute_test(ctx);
 
@@ -308,7 +310,7 @@ int main() {
             }
         }
 
-        ctx.device().waitIdle();
+        ctx.wait_idle();
     } catch (const std::exception& e) {
         std::cerr << "fatal: " << e.what() << std::endl;
         glfwDestroyWindow(window);

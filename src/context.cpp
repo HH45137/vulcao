@@ -5,6 +5,7 @@
 
 #include <iostream>
 #include <stdexcept>
+#include <utility>
 
 namespace vulcao {
 namespace {
@@ -21,8 +22,8 @@ const char* device_type_name(VkPhysicalDeviceType type) {
 
 }
 
-Context::Context(const std::string& appName, uint32_t appVersion) {
-    create_instance(appName, appVersion);
+Context::Context(const ContextInfo& info) {
+    create_instance(info);
 }
 
 Context::~Context() {
@@ -50,11 +51,12 @@ Context::~Context() {
         vkb::destroy_instance(vkb_instance_);
 }
 
-void Context::initialize(vk::SurfaceKHR surface, vk::Extent2D extent) {
+void Context::initialize(vk::SurfaceKHR surface, vk::Extent2D extent, SwapchainInfo swapchain_info) {
     if (initialized())
         throw std::runtime_error("Context::initialize called twice");
 
     surface_ = surface;
+    swapchain_info_ = std::move(swapchain_info);
     pick_physical_device();
     create_device();
     create_allocator();
@@ -62,15 +64,27 @@ void Context::initialize(vk::SurfaceKHR surface, vk::Extent2D extent) {
     create_command_pool();
 }
 
-void Context::create_instance(const std::string& appName, uint32_t appVersion) {
-    vkb::InstanceBuilder builder;
-    builder.set_app_name(appName.c_str())
-        .set_app_version(appVersion)
-        .require_api_version(1, 3, 0);
+void Context::wait_idle() {
+    if (device_)
+        device_.waitIdle();
+}
 
-#ifndef NDEBUG
-    builder.request_validation_layers().use_default_debug_messenger();
-#endif
+void Context::create_instance(const ContextInfo& info) {
+    api_version_ = info.api_version;
+
+    vkb::InstanceBuilder builder;
+    builder.set_app_name(info.app_name.c_str())
+        .set_app_version(info.app_version)
+        .require_api_version(VK_VERSION_MAJOR(info.api_version), VK_VERSION_MINOR(info.api_version),
+                             VK_VERSION_PATCH(info.api_version));
+
+    if (info.validation)
+        builder.request_validation_layers().use_default_debug_messenger();
+
+    for (const char* extension : info.extensions)
+        builder.enable_extension(extension);
+    for (const char* layer : info.layers)
+        builder.enable_layer(layer);
 
     vkb_instance_ = check(builder.build(), "create instance");
     instance_ = vk::Instance{vkb_instance_.instance};
@@ -159,14 +173,32 @@ void Context::create_device() {
 }
 
 void Context::create_allocator() {
-    allocator_.create(instance_, physical_device_, device_, VK_API_VERSION_1_3);
+    allocator_.create(instance_, physical_device_, device_, api_version_);
 }
 
 void Context::create_swapchain(vk::SwapchainKHR oldSwapchain, vk::Extent2D extent) {
     vkb::SwapchainBuilder builder{vkb_device_, surface_};
-    builder.set_desired_format(VkSurfaceFormatKHR{VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
-        .set_desired_present_mode(VK_PRESENT_MODE_MAILBOX_KHR)
-        .set_desired_extent(extent.width, extent.height);
+    builder.set_desired_extent(extent.width, extent.height);
+
+    if (!swapchain_info_.formats.empty()) {
+        builder.set_desired_format(swapchain_info_.formats.front());
+        for (size_t i = 1; i < swapchain_info_.formats.size(); ++i)
+            builder.add_fallback_format(swapchain_info_.formats[i]);
+    }
+
+    if (!swapchain_info_.present_modes.empty()) {
+        builder.set_desired_present_mode(
+            static_cast<VkPresentModeKHR>(swapchain_info_.present_modes.front()));
+        for (size_t i = 1; i < swapchain_info_.present_modes.size(); ++i)
+            builder.add_fallback_present_mode(
+                static_cast<VkPresentModeKHR>(swapchain_info_.present_modes[i]));
+    }
+
+    if (swapchain_info_.extra_usage != vk::ImageUsageFlags{})
+        builder.add_image_usage_flags(static_cast<VkImageUsageFlags>(swapchain_info_.extra_usage));
+
+    if (swapchain_info_.min_image_count > 0)
+        builder.set_desired_min_image_count(swapchain_info_.min_image_count);
 
     if (oldSwapchain)
         builder.set_old_swapchain(oldSwapchain);

@@ -17,14 +17,37 @@ namespace vulcao {
 class Buffer;
 class Image;
 
+/// @brief Creation parameters of a Context.
+struct ContextInfo {
+    std::string app_name = "vulcao";
+    uint32_t app_version = VK_MAKE_VERSION(1, 0, 0);
+    uint32_t api_version = VK_API_VERSION_1_3;
+#ifdef NDEBUG
+    bool validation = false;
+#else
+    bool validation = true;
+#endif
+    std::vector<const char*> extensions;
+    std::vector<const char*> layers;
+};
+
+/// @brief Creation parameters of the swapchain.
+struct SwapchainInfo {
+    std::vector<vk::SurfaceFormatKHR> formats{
+        vk::SurfaceFormatKHR{.format = vk::Format::eB8G8R8A8Srgb,
+                             .colorSpace = vk::ColorSpaceKHR::eSrgbNonlinear}};
+    std::vector<vk::PresentModeKHR> present_modes{
+        vk::PresentModeKHR::eMailbox, vk::PresentModeKHR::eFifo};
+    vk::ImageUsageFlags extra_usage;
+    uint32_t min_image_count = 0;
+};
+
 /// @brief Owns the Vulkan instance, device, swapchain, command pool and VMA allocator.
 class Context {
 public:
     /// @brief Creates the instance.
-    /// @param appName Application name.
-    /// @param appVersion Application version.
-    explicit Context(const std::string& appName = "vulcao",
-                     uint32_t appVersion = VK_MAKE_VERSION(1, 0, 0));
+    /// @param info Context creation parameters.
+    explicit Context(const ContextInfo& info = {});
 
     /// @brief Destroys all owned Vulkan objects.
     ~Context();
@@ -40,11 +63,15 @@ public:
     /// @brief Picks a device, creates the allocator, swapchain and command pool.
     /// @param surface Presentation surface.
     /// @param extent Initial swapchain extent.
-    void initialize(vk::SurfaceKHR surface, vk::Extent2D extent);
+    /// @param swapchain_info Swapchain creation parameters.
+    void initialize(vk::SurfaceKHR surface, vk::Extent2D extent, SwapchainInfo swapchain_info = {});
 
     /// @brief Recreates the swapchain with a new extent.
     /// @param extent New swapchain extent.
     void recreate_swapchain(vk::Extent2D extent);
+
+    /// @brief Waits for the device to become idle.
+    void wait_idle();
 
     /// @brief Submits a command buffer on the graphics queue and waits for it.
     /// @param cmd Command buffer to submit.
@@ -179,7 +206,7 @@ public:
 
 private:
     /// @brief Creates the instance and the debug messenger.
-    void create_instance(const std::string& appName, uint32_t appVersion);
+    void create_instance(const ContextInfo& info);
 
     /// @brief Selects a suitable physical device.
     void pick_physical_device();
@@ -208,6 +235,7 @@ private:
     vk::SurfaceKHR surface_;
     vk::PhysicalDevice physical_device_;
     vk::Device device_;
+    uint32_t api_version_ = VK_API_VERSION_1_3;
     vk::Queue graphics_queue_;
     vk::Queue present_queue_;
     uint32_t graphics_queue_family_index_ = 0;
@@ -218,6 +246,7 @@ private:
     vk::Extent2D swapchain_extent_{};
     std::vector<vk::Image> swapchain_images_;
     std::vector<vk::ImageView> swapchain_image_views_;
+    SwapchainInfo swapchain_info_;
 
     vk::CommandPool command_pool_;
     CommandBuffer immediate_command_buffer_;
