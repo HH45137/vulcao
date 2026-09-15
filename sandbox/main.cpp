@@ -7,6 +7,7 @@
 #include <iostream>
 #include <span>
 #include <stdexcept>
+#include <string_view>
 #include <vector>
 
 #define GLFW_INCLUDE_VULKAN
@@ -293,10 +294,24 @@ int main() {
     }
 
     try {
-        vulcao::Context ctx{{.app_name = "vulcao-game"}};
+        vulcao::Context ctx{{.app_name = "vulcao-game",
+                             .separate_compute_queue = true,
+                             .separate_transfer_queue = true,
+                             .log = [](vulcao::LogLevel, std::string_view message) {
+                                 std::cout << message << std::endl;
+                             }}};
         ctx.initialize(create_surface(ctx.instance(), window), framebuffer_extent(window),
                        vulcao::SwapchainInfo{
                            .extra_usage = vk::ImageUsageFlagBits::eTransferSrc});
+
+        std::cout << "dedicated compute queue: "
+                  << (ctx.has_compute_queue() ? std::to_string(ctx.compute_queue_family_index())
+                                              : "none")
+                  << std::endl;
+        std::cout << "dedicated transfer queue: "
+                  << (ctx.has_transfer_queue() ? std::to_string(ctx.transfer_queue_family_index())
+                                               : "none")
+                  << std::endl;
 
         run_compute_test(ctx);
 

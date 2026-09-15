@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <ranges>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <vulkan/vulkan.hpp>
@@ -17,6 +19,25 @@ namespace vulcao {
 class Buffer;
 class Image;
 
+/// @brief Severity of a message sent to the log callback.
+enum class LogLevel {
+    info,
+    warning,
+    error,
+};
+
+/// @brief Device features that can be requested when creating the device.
+struct DeviceFeatures {
+    bool sampler_anisotropy = false;
+    bool timeline_semaphore = false;
+    bool descriptor_indexing = false;
+    bool shader_int64 = false;
+    bool fill_mode_non_solid = false;
+    bool wide_lines = false;
+    bool depth_clamp = false;
+    bool draw_indirect_first_instance = false;
+};
+
 /// @brief Creation parameters of a Context.
 struct ContextInfo {
     std::string app_name = "vulcao";
@@ -29,6 +50,21 @@ struct ContextInfo {
 #endif
     std::vector<const char*> extensions;
     std::vector<const char*> layers;
+    std::vector<const char*> device_extensions;
+    DeviceFeatures device_features;
+    bool separate_compute_queue = false;
+    bool separate_transfer_queue = false;
+    std::function<void(vkb::PhysicalDeviceSelector&)> customize_selector;
+    std::function<void(LogLevel, std::string_view)> log;
+};
+
+/// @brief Information about a physical device.
+struct PhysicalDeviceInfo {
+    std::string name;
+    vk::PhysicalDeviceType type = vk::PhysicalDeviceType::eOther;
+    uint32_t vendor_id = 0;
+    uint32_t driver_version = 0;
+    uint32_t api_version = 0;
 };
 
 /// @brief Creation parameters of the swapchain.
@@ -91,6 +127,12 @@ public:
     /// @param cmd Command buffer to submit.
     /// @return A new fence signaled when the submission completes.
     Fence submit(vk::CommandBuffer cmd);
+
+    /// @brief Submits commands on an arbitrary queue without waiting.
+    /// @param queue Queue to submit to.
+    /// @param info Submission parameters.
+    /// @param fence Optional fence signaled when the submission completes.
+    void submit(vk::Queue queue, const vk::SubmitInfo& info, vk::Fence fence = {});
 
     /// @brief Records one-time commands with the internal command buffer, submits and waits.
     /// @param fn Callable that records commands, invoked with a CommandBuffer reference.
@@ -155,8 +197,8 @@ public:
     /// @brief Returns true if the context has been initialized.
     bool initialized() const { return static_cast<bool>(device_); }
 
-    /// @brief Prints information about all physical devices.
-    void inquery_physical_devices_info();
+    /// @brief Returns information about all physical devices.
+    std::vector<PhysicalDeviceInfo> enumerate_physical_devices() const;
 
     /// @brief Returns the allocator owned by this context.
     Allocator& allocator() { return allocator_; }
@@ -182,8 +224,26 @@ public:
     /// @brief Returns the present queue.
     vk::Queue present_queue() const { return present_queue_; }
 
+    /// @brief Returns the dedicated compute queue, or null if none was requested.
+    vk::Queue compute_queue() const { return compute_queue_; }
+
+    /// @brief Returns the dedicated transfer queue, or null if none was requested.
+    vk::Queue transfer_queue() const { return transfer_queue_; }
+
     /// @brief Returns the queue family index used for graphics.
     uint32_t graphics_queue_family_index() const { return graphics_queue_family_index_; }
+
+    /// @brief Returns the queue family index used for compute.
+    uint32_t compute_queue_family_index() const { return compute_queue_family_index_; }
+
+    /// @brief Returns the queue family index used for transfer.
+    uint32_t transfer_queue_family_index() const { return transfer_queue_family_index_; }
+
+    /// @brief Returns true if a dedicated compute queue is available.
+    bool has_compute_queue() const { return has_compute_queue_; }
+
+    /// @brief Returns true if a dedicated transfer queue is available.
+    bool has_transfer_queue() const { return has_transfer_queue_; }
 
     /// @brief Returns the swapchain.
     vk::SwapchainKHR swapchain() const { return swapchain_; }
@@ -212,6 +272,9 @@ public:
 private:
     /// @brief Creates the instance and the debug messenger.
     void create_instance(const ContextInfo& info);
+
+    /// @brief Sends a message to the log callback if one is set.
+    void log(LogLevel level, std::string_view message) const;
 
     /// @brief Selects a suitable physical device.
     void pick_physical_device();
@@ -243,8 +306,15 @@ private:
     uint32_t api_version_ = VK_API_VERSION_1_3;
     vk::Queue graphics_queue_;
     vk::Queue present_queue_;
+    vk::Queue compute_queue_;
+    vk::Queue transfer_queue_;
     uint32_t graphics_queue_family_index_ = 0;
+    uint32_t compute_queue_family_index_ = 0;
+    uint32_t transfer_queue_family_index_ = 0;
+    bool has_compute_queue_ = false;
+    bool has_transfer_queue_ = false;
     Allocator allocator_;
+    ContextInfo info_;
 
     vk::SwapchainKHR swapchain_;
     vk::Format swapchain_format_ = vk::Format::eUndefined;

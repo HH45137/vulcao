@@ -3,8 +3,9 @@
 #include "vulcao/check.h"
 #include "vulcao/image.h"
 
-#include <iostream>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <utility>
 
 namespace vulcao {
@@ -22,8 +23,13 @@ const char* device_type_name(VkPhysicalDeviceType type) {
 
 }
 
-Context::Context(const ContextInfo& info) {
-    create_instance(info);
+Context::Context(const ContextInfo& info) : info_(info) {
+    create_instance(info_);
+}
+
+void Context::log(LogLevel level, std::string_view message) const {
+    if (info_.log)
+        info_.log(level, message);
 }
 
 Context::~Context() {
@@ -90,75 +96,89 @@ void Context::create_instance(const ContextInfo& info) {
     instance_ = vk::Instance{vkb_instance_.instance};
 }
 
-void Context::inquery_physical_devices_info() {
-    std::cout << "------------------- devices info -------------------" << std::endl;
-
-    auto physical_devices = instance_.enumeratePhysicalDevices();
-    if (physical_devices.empty())
-        std::cerr << "not find physical device!!!!!!!\n";
-
-    for (const auto& physical_device : physical_devices) {
-        auto properties = physical_device.getProperties();
-
-        std::string vendor_name;
-        switch (properties.vendorID) {
-            case 0x10DE: vendor_name = "NVIDIA"; break;
-            case 0x1002: vendor_name = "AMD"; break;
-            case 0x8086: vendor_name = "Intel"; break;
-            case 0x13B5: vendor_name = "ARM"; break;
-            default: vendor_name = "Unknown"; break;
-        }
-        std::cout << "find gpu vendor: " << vendor_name << ". \n";
-
-        std::cout << "device name: " << properties.deviceName << ". \n";
-
-        std::string device_type;
-        switch (properties.deviceType) {
-            case vk::PhysicalDeviceType::eCpu: device_type = "CPU"; break;
-            case vk::PhysicalDeviceType::eOther: device_type = "Other"; break;
-            case vk::PhysicalDeviceType::eVirtualGpu: device_type = "Virtual GPU"; break;
-            case vk::PhysicalDeviceType::eDiscreteGpu: device_type = "Discrete GPU"; break;
-            case vk::PhysicalDeviceType::eIntegratedGpu: device_type = "Integrated GPU"; break;
-            default: device_type = "Unknown"; break;
-        }
-        std::cout << "device type: " << device_type << ". \n";
-
-        std::cout << "driver version: " << properties.driverVersion << ". \n";
+std::vector<PhysicalDeviceInfo> Context::enumerate_physical_devices() const {
+    std::vector<PhysicalDeviceInfo> result;
+    for (const vk::PhysicalDevice& physical_device : instance_.enumeratePhysicalDevices()) {
+        const vk::PhysicalDeviceProperties properties = physical_device.getProperties();
+        result.push_back(PhysicalDeviceInfo{
+            .name = properties.deviceName,
+            .type = properties.deviceType,
+            .vendor_id = properties.vendorID,
+            .driver_version = properties.driverVersion,
+            .api_version = properties.apiVersion,
+        });
     }
+    return result;
 }
 
 void Context::pick_physical_device() {
-    inquery_physical_devices_info();
+    vkb::PhysicalDeviceSelector selector{vkb_instance_};
+    selector.set_surface(surface_).set_minimum_version(1, 3);
 
-    VkPhysicalDeviceVulkan13Features features13{};
-    features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
-    features13.synchronization2 = VK_TRUE;
-    features13.dynamicRendering = VK_TRUE;
+    const DeviceFeatures& wanted = info_.device_features;
+    selector.set_required_features(vk::PhysicalDeviceFeatures{
+        .depthClamp = wanted.depth_clamp ? VK_TRUE : VK_FALSE,
+        .fillModeNonSolid = wanted.fill_mode_non_solid ? VK_TRUE : VK_FALSE,
+        .wideLines = wanted.wide_lines ? VK_TRUE : VK_FALSE,
+        .samplerAnisotropy = wanted.sampler_anisotropy ? VK_TRUE : VK_FALSE,
+        .drawIndirectFirstInstance = wanted.draw_indirect_first_instance ? VK_TRUE : VK_FALSE,
+        .shaderInt64 = wanted.shader_int64 ? VK_TRUE : VK_FALSE,
+    });
 
-    vkb_physical_device_ =
-        check(vkb::PhysicalDeviceSelector{vkb_instance_}
-                      .set_surface(surface_)
-                      .set_minimum_version(1, 3)
-                      .set_required_features_13(features13)
-                      .select(),
-                  "select physical device");
+    selector.set_required_features_13(vk::PhysicalDeviceVulkan13Features{
+        .synchronization2 = VK_TRUE,
+        .dynamicRendering = VK_TRUE,
+    });
+
+    if (wanted.timeline_semaphore)
+        selector.add_required_extension_features(
+            vk::PhysicalDeviceTimelineSemaphoreFeatures{.timelineSemaphore = VK_TRUE});
+
+    if (wanted.descriptor_indexing)
+        selector.add_required_extension_features(vk::PhysicalDeviceDescriptorIndexingFeatures{
+            .shaderInputAttachmentArrayDynamicIndexing = VK_TRUE,
+            .shaderUniformTexelBufferArrayDynamicIndexing = VK_TRUE,
+            .shaderStorageTexelBufferArrayDynamicIndexing = VK_TRUE,
+            .shaderUniformBufferArrayNonUniformIndexing = VK_TRUE,
+            .shaderSampledImageArrayNonUniformIndexing = VK_TRUE,
+            .shaderStorageBufferArrayNonUniformIndexing = VK_TRUE,
+            .shaderStorageImageArrayNonUniformIndexing = VK_TRUE,
+            .shaderInputAttachmentArrayNonUniformIndexing = VK_TRUE,
+            .shaderUniformTexelBufferArrayNonUniformIndexing = VK_TRUE,
+            .shaderStorageTexelBufferArrayNonUniformIndexing = VK_TRUE,
+            .descriptorBindingUniformBufferUpdateAfterBind = VK_TRUE,
+            .descriptorBindingSampledImageUpdateAfterBind = VK_TRUE,
+            .descriptorBindingStorageImageUpdateAfterBind = VK_TRUE,
+            .descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE,
+            .descriptorBindingUniformTexelBufferUpdateAfterBind = VK_TRUE,
+            .descriptorBindingStorageTexelBufferUpdateAfterBind = VK_TRUE,
+            .descriptorBindingUpdateUnusedWhilePending = VK_TRUE,
+            .descriptorBindingPartiallyBound = VK_TRUE,
+            .descriptorBindingVariableDescriptorCount = VK_TRUE,
+            .runtimeDescriptorArray = VK_TRUE,
+        });
+
+    for (const char* extension : info_.device_extensions)
+        selector.add_required_extension(extension);
+
+    if (info_.separate_compute_queue)
+        selector.require_separate_compute_queue();
+    if (info_.separate_transfer_queue)
+        selector.require_separate_transfer_queue();
+
+    if (info_.customize_selector)
+        info_.customize_selector(selector);
+
+    vkb_physical_device_ = check(selector.select(), "select physical device");
     physical_device_ = vk::PhysicalDevice{vkb_physical_device_.physical_device};
 
-    const auto& props = vkb_physical_device_.properties;
-    std::cout << "GPU: " << props.deviceName << " (" << device_type_name(props.deviceType) << ")"
-              << std::endl;
+    const vk::PhysicalDeviceProperties properties = physical_device_.getProperties();
+    log(LogLevel::info, "GPU: " + std::string(properties.deviceName) + " (" +
+                            device_type_name(static_cast<VkPhysicalDeviceType>(properties.deviceType)) +
+                            ")");
 }
 
 void Context::create_device() {
-    std::vector<vk::QueueFamilyProperties> queue_family_properties =
-        physical_device_.getQueueFamilyProperties();
-    std::cout << "number of queue families: " << queue_family_properties.size() << std::endl;
-    for (uint32_t i = 0; i < queue_family_properties.size(); i++) {
-        std::cout << "Queue family " << i << ": " << queue_family_properties[i].queueCount
-                  << " queues, flags: " << vk::to_string(queue_family_properties[i].queueFlags)
-                  << std::endl;
-    }
-
     vkb_device_ = check(vkb::DeviceBuilder{vkb_physical_device_}.build(), "create device");
     device_ = vk::Device{vkb_device_.device};
 
@@ -167,9 +187,39 @@ void Context::create_device() {
     graphics_queue_ = vk::Queue{check(vkb_device_.get_queue(vkb::QueueType::graphics), "get graphics queue")};
     present_queue_ = vk::Queue{check(vkb_device_.get_queue(vkb::QueueType::present), "get present queue")};
 
-    std::cout << "queue families: graphics=" << graphics_queue_family_index_
-              << ", present=" << check(vkb_device_.get_queue_index(vkb::QueueType::present), "get present queue index")
-              << std::endl;
+    if (info_.separate_compute_queue) {
+        const vkb::Result<uint32_t> index = vkb_device_.get_queue_index(vkb::QueueType::compute);
+        const vkb::Result<VkQueue> queue = vkb_device_.get_queue(vkb::QueueType::compute);
+        if (index && queue) {
+            compute_queue_family_index_ = index.value();
+            compute_queue_ = vk::Queue{queue.value()};
+            has_compute_queue_ = true;
+        } else {
+            log(LogLevel::warning, "dedicated compute queue was requested but is not available");
+        }
+    }
+
+    if (info_.separate_transfer_queue) {
+        const vkb::Result<uint32_t> index = vkb_device_.get_queue_index(vkb::QueueType::transfer);
+        const vkb::Result<VkQueue> queue = vkb_device_.get_queue(vkb::QueueType::transfer);
+        if (index && queue) {
+            transfer_queue_family_index_ = index.value();
+            transfer_queue_ = vk::Queue{queue.value()};
+            has_transfer_queue_ = true;
+        } else {
+            log(LogLevel::warning, "dedicated transfer queue was requested but is not available");
+        }
+    }
+
+    log(LogLevel::info, "queues: graphics=" + std::to_string(graphics_queue_family_index_) +
+                            ", present=" +
+                            std::to_string(
+                                check(vkb_device_.get_queue_index(vkb::QueueType::present),
+                                      "get present queue index")) +
+                            ", compute=" +
+                            (has_compute_queue_ ? std::to_string(compute_queue_family_index_) : "none") +
+                            ", transfer=" +
+                            (has_transfer_queue_ ? std::to_string(transfer_queue_family_index_) : "none"));
 }
 
 void Context::create_allocator() {
@@ -215,9 +265,10 @@ void Context::create_swapchain(vk::SwapchainKHR oldSwapchain, vk::Extent2D exten
     auto views = check(vkb_swapchain_.get_image_views(), "create swapchain image views");
     swapchain_image_views_.assign(views.begin(), views.end());
 
-    std::cout << "swapchain: " << swapchain_extent_.width << "x" << swapchain_extent_.height
-              << ", " << swapchain_images_.size() << " images, " << vk::to_string(swapchain_format_)
-              << std::endl;
+    log(LogLevel::info, "swapchain: " + std::to_string(swapchain_extent_.width) + "x" +
+                            std::to_string(swapchain_extent_.height) + ", " +
+                            std::to_string(swapchain_images_.size()) + " images, " +
+                            vk::to_string(swapchain_format_));
 }
 
 void Context::create_command_pool() {
@@ -258,7 +309,11 @@ void Context::submit_and_wait(vk::CommandBuffer cmd) {
 }
 
 void Context::submit(const vk::SubmitInfo& info, vk::Fence fence) {
-    graphics_queue_.submit(info, fence);
+    submit(graphics_queue_, info, fence);
+}
+
+void Context::submit(vk::Queue queue, const vk::SubmitInfo& info, vk::Fence fence) {
+    queue.submit(info, fence);
 }
 
 void Context::submit(vk::CommandBuffer cmd, vk::Fence fence) {
