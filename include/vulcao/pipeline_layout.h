@@ -45,6 +45,15 @@ public:
     static PipelineLayout create_from_reflection(vk::Device device,
                                                  std::span<const ShaderReflection> reflections);
 
+    /// @brief Creates a pipeline layout using descriptor set layouts from a cache.
+    /// @param device Device that creates the layout.
+    /// @param cache Cache that owns the descriptor set layouts; it must outlive the pipeline layout.
+    /// @param reflections Reflection data of the stages.
+    /// @return The created pipeline layout.
+    static PipelineLayout create_from_reflection(vk::Device device,
+                                                 DescriptorSetLayoutCache& cache,
+                                                 std::span<const ShaderReflection> reflections);
+
     /// @brief Returns true if the layout holds a valid handle.
     bool valid() const { return static_cast<bool>(layout_); }
 
@@ -57,6 +66,13 @@ public:
     /// @brief Returns the set layouts owned by this object, if created from reflection.
     const std::vector<DescriptorSetLayout>& set_layouts() const { return owned_set_layouts_; }
 
+    /// @brief Returns the descriptor set layout handle at an index.
+    /// @param set Descriptor set index.
+    vk::DescriptorSetLayout set_layout(uint32_t set) const { return set_layout_handles_.at(set); }
+
+    /// @brief Returns the number of descriptor set layouts.
+    size_t set_count() const { return set_layout_handles_.size(); }
+
     /// @brief Destroys the layout and resets the wrapper.
     void destroy();
 
@@ -64,6 +80,7 @@ private:
     vk::Device device_;
     vk::PipelineLayout layout_;
     std::vector<DescriptorSetLayout> owned_set_layouts_;
+    std::vector<vk::DescriptorSetLayout> set_layout_handles_;
 };
 
 }

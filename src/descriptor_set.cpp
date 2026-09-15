@@ -4,6 +4,7 @@
 #include "vulcao/image.h"
 #include "vulcao/sampler.h"
 
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
@@ -86,13 +87,18 @@ DescriptorPool DescriptorPool::create(vk::Device device,
 DescriptorSet DescriptorPool::allocate(const DescriptorSetLayout& layout) {
     if (!layout.valid())
         throw std::runtime_error("DescriptorPool::allocate: invalid layout");
+    return allocate(layout.handle());
+}
 
-    const vk::DescriptorSetLayout raw_layout = layout.handle();
+DescriptorSet DescriptorPool::allocate(vk::DescriptorSetLayout layout) {
+    if (!layout)
+        throw std::runtime_error("DescriptorPool::allocate: invalid layout");
+
     const vk::DescriptorSet set = device_
                                       .allocateDescriptorSets(vk::DescriptorSetAllocateInfo{
                                           .descriptorPool = pool_,
                                           .descriptorSetCount = 1,
-                                          .pSetLayouts = &raw_layout,
+                                          .pSetLayouts = &layout,
                                       })
                                       .front();
 
@@ -189,6 +195,151 @@ DescriptorSet& DescriptorSet::write_storage_image(uint32_t binding,
                                  },
                                  {});
     return *this;
+}
+
+DescriptorSetWriter::DescriptorSetWriter(const DescriptorSet& set)
+    : device_(set.device_), set_(set.set_) {}
+
+DescriptorSetWriter& DescriptorSetWriter::write_buffer(uint32_t binding,
+                                                       const Buffer& buffer,
+                                                       vk::DescriptorType type,
+                                                       uint32_t array_element,
+                                                       vk::DeviceSize offset,
+                                                       vk::DeviceSize range) {
+    records_.push_back(Record{
+        .binding = binding,
+        .array_element = array_element,
+        .type = type,
+        .is_image = false,
+        .buffer_info = vk::DescriptorBufferInfo{
+            .buffer = buffer.handle(),
+            .offset = offset,
+            .range = range,
+        },
+    });
+    return *this;
+}
+
+DescriptorSetWriter& DescriptorSetWriter::write_uniform_buffer(uint32_t binding,
+                                                               const Buffer& buffer,
+                                                               uint32_t array_element,
+                                                               vk::DeviceSize offset,
+                                                               vk::DeviceSize range) {
+    return write_buffer(binding, buffer, vk::DescriptorType::eUniformBuffer, array_element, offset,
+                        range);
+}
+
+DescriptorSetWriter& DescriptorSetWriter::write_storage_buffer(uint32_t binding,
+                                                               const Buffer& buffer,
+                                                               uint32_t array_element,
+                                                               vk::DeviceSize offset,
+                                                               vk::DeviceSize range) {
+    return write_buffer(binding, buffer, vk::DescriptorType::eStorageBuffer, array_element, offset,
+                        range);
+}
+
+DescriptorSetWriter& DescriptorSetWriter::write_image(uint32_t binding,
+                                                      const Image& image,
+                                                      const Sampler& sampler,
+                                                      vk::ImageLayout layout,
+                                                      uint32_t array_element) {
+    records_.push_back(Record{
+        .binding = binding,
+        .array_element = array_element,
+        .type = vk::DescriptorType::eCombinedImageSampler,
+        .is_image = true,
+        .image_info = vk::DescriptorImageInfo{
+            .sampler = sampler.handle(),
+            .imageView = image.view(),
+            .imageLayout = layout,
+        },
+    });
+    return *this;
+}
+
+DescriptorSetWriter& DescriptorSetWriter::write_storage_image(uint32_t binding,
+                                                              const Image& image,
+                                                              vk::ImageLayout layout,
+                                                              uint32_t array_element) {
+    records_.push_back(Record{
+        .binding = binding,
+        .array_element = array_element,
+        .type = vk::DescriptorType::eStorageImage,
+        .is_image = true,
+        .image_info = vk::DescriptorImageInfo{
+            .sampler = nullptr,
+            .imageView = image.view(),
+            .imageLayout = layout,
+        },
+    });
+    return *this;
+}
+
+void DescriptorSetWriter::flush() {
+    if (records_.empty())
+        return;
+
+    std::vector<vk::DescriptorBufferInfo> buffer_infos(records_.size());
+    std::vector<vk::DescriptorImageInfo> image_infos(records_.size());
+    std::vector<vk::WriteDescriptorSet> writes;
+    writes.reserve(records_.size());
+
+    for (size_t i = 0; i < records_.size(); ++i) {
+        const Record& record = records_[i];
+        vk::WriteDescriptorSet write{
+            .dstSet = set_,
+            .dstBinding = record.binding,
+            .dstArrayElement = record.array_element,
+            .descriptorCount = 1,
+            .descriptorType = record.type,
+        };
+
+        if (record.is_image) {
+            image_infos[i] = record.image_info;
+            write.pImageInfo = &image_infos[i];
+        } else {
+            buffer_infos[i] = record.buffer_info;
+            write.pBufferInfo = &buffer_infos[i];
+        }
+
+        writes.push_back(write);
+    }
+
+    device_.updateDescriptorSets(writes, {});
+    records_.clear();
+}
+
+void DescriptorSetWriter::clear() {
+    records_.clear();
+}
+
+DescriptorSetLayoutCache::DescriptorSetLayoutCache(vk::Device device) : device_(device) {}
+
+bool DescriptorSetLayoutCache::Key::operator<(const Key& other) const {
+    return entries < other.entries;
+}
+
+vk::DescriptorSetLayout DescriptorSetLayoutCache::get(
+    vk::ArrayProxy<const vk::DescriptorSetLayoutBinding> bindings) {
+    Key key;
+    key.entries.reserve(bindings.size());
+    for (const vk::DescriptorSetLayoutBinding& binding : bindings)
+        key.entries.emplace_back(binding.binding, binding.descriptorType, binding.descriptorCount,
+                                 binding.stageFlags);
+    std::sort(key.entries.begin(), key.entries.end());
+
+    const auto it = cache_.find(key);
+    if (it != cache_.end())
+        return it->second.handle();
+
+    DescriptorSetLayout layout = DescriptorSetLayout::create(device_, bindings);
+    const vk::DescriptorSetLayout handle = layout.handle();
+    cache_.emplace(std::move(key), std::move(layout));
+    return handle;
+}
+
+void DescriptorSetLayoutCache::clear() {
+    cache_.clear();
 }
 
 }

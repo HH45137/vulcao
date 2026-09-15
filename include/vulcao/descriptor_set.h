@@ -1,6 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
+#include <tuple>
+#include <vector>
 
 #include <vulkan/vulkan.hpp>
 
@@ -10,6 +13,7 @@ namespace vulcao {
 
 class Buffer;
 class DescriptorSet;
+class DescriptorSetWriter;
 class Image;
 class Sampler;
 
@@ -109,6 +113,11 @@ public:
     /// @return The allocated descriptor set.
     DescriptorSet allocate(const DescriptorSetLayout& layout);
 
+    /// @brief Allocates one descriptor set from a raw layout handle.
+    /// @param layout Layout of the set.
+    /// @return The allocated descriptor set.
+    DescriptorSet allocate(vk::DescriptorSetLayout layout);
+
     /// @brief Resets the pool and frees all sets allocated from it.
     /// @param flags Reset flags.
     void reset(vk::DescriptorPoolResetFlags flags = {});
@@ -193,9 +202,105 @@ public:
 
 private:
     friend class DescriptorPool;
+    friend class DescriptorSetWriter;
 
     vk::Device device_;
     vk::DescriptorSet set_;
+};
+
+/// @brief Batches descriptor writes and flushes them with a single update.
+class DescriptorSetWriter {
+public:
+    /// @brief Creates a writer targeting a descriptor set.
+    /// @param set Descriptor set to write to.
+    explicit DescriptorSetWriter(const DescriptorSet& set);
+
+    /// @brief Queues a buffer descriptor write.
+    /// @param binding Binding index.
+    /// @param buffer Buffer to bind.
+    /// @param type Descriptor type.
+    /// @param array_element First array element to write.
+    /// @param offset Byte offset in the buffer.
+    /// @param range Byte size of the binding, or VK_WHOLE_SIZE.
+    /// @return This writer.
+    DescriptorSetWriter& write_buffer(uint32_t binding,
+                                      const Buffer& buffer,
+                                      vk::DescriptorType type,
+                                      uint32_t array_element = 0,
+                                      vk::DeviceSize offset = 0,
+                                      vk::DeviceSize range = VK_WHOLE_SIZE);
+
+    /// @brief Queues a uniform buffer descriptor write.
+    DescriptorSetWriter& write_uniform_buffer(uint32_t binding,
+                                              const Buffer& buffer,
+                                              uint32_t array_element = 0,
+                                              vk::DeviceSize offset = 0,
+                                              vk::DeviceSize range = VK_WHOLE_SIZE);
+
+    /// @brief Queues a storage buffer descriptor write.
+    DescriptorSetWriter& write_storage_buffer(uint32_t binding,
+                                              const Buffer& buffer,
+                                              uint32_t array_element = 0,
+                                              vk::DeviceSize offset = 0,
+                                              vk::DeviceSize range = VK_WHOLE_SIZE);
+
+    /// @brief Queues a combined image sampler descriptor write.
+    DescriptorSetWriter& write_image(uint32_t binding,
+                                     const Image& image,
+                                     const Sampler& sampler,
+                                     vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                                     uint32_t array_element = 0);
+
+    /// @brief Queues a storage image descriptor write.
+    DescriptorSetWriter& write_storage_image(uint32_t binding,
+                                             const Image& image,
+                                             vk::ImageLayout layout = vk::ImageLayout::eGeneral,
+                                             uint32_t array_element = 0);
+
+    /// @brief Applies all queued writes in one update and clears them.
+    void flush();
+
+    /// @brief Discards all queued writes.
+    void clear();
+
+private:
+    struct Record {
+        uint32_t binding = 0;
+        uint32_t array_element = 0;
+        vk::DescriptorType type = vk::DescriptorType::eUniformBuffer;
+        bool is_image = false;
+        vk::DescriptorBufferInfo buffer_info{};
+        vk::DescriptorImageInfo image_info{};
+    };
+
+    vk::Device device_;
+    vk::DescriptorSet set_;
+    std::vector<Record> records_;
+};
+
+/// @brief Caches descriptor set layouts created from identical bindings.
+class DescriptorSetLayoutCache {
+public:
+    /// @brief Creates a cache bound to a device.
+    /// @param device Device that creates the layouts.
+    explicit DescriptorSetLayoutCache(vk::Device device);
+
+    /// @brief Returns a cached layout for the bindings, creating it on first use.
+    /// @param bindings Bindings of the layout.
+    /// @return The descriptor set layout handle.
+    vk::DescriptorSetLayout get(vk::ArrayProxy<const vk::DescriptorSetLayoutBinding> bindings);
+
+    /// @brief Destroys all cached layouts.
+    void clear();
+
+private:
+    struct Key {
+        std::vector<std::tuple<uint32_t, vk::DescriptorType, uint32_t, vk::ShaderStageFlags>> entries;
+        bool operator<(const Key& other) const;
+    };
+
+    vk::Device device_;
+    std::map<Key, DescriptorSetLayout> cache_;
 };
 
 }

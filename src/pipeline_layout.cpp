@@ -12,7 +12,8 @@ PipelineLayout::~PipelineLayout() {
 PipelineLayout::PipelineLayout(PipelineLayout&& other) noexcept
     : device_(std::exchange(other.device_, vk::Device{})),
       layout_(std::exchange(other.layout_, vk::PipelineLayout{})),
-      owned_set_layouts_(std::move(other.owned_set_layouts_)) {}
+      owned_set_layouts_(std::move(other.owned_set_layouts_)),
+      set_layout_handles_(std::move(other.set_layout_handles_)) {}
 
 PipelineLayout& PipelineLayout::operator=(PipelineLayout&& other) noexcept {
     if (this != &other) {
@@ -20,6 +21,7 @@ PipelineLayout& PipelineLayout::operator=(PipelineLayout&& other) noexcept {
         device_ = std::exchange(other.device_, vk::Device{});
         layout_ = std::exchange(other.layout_, vk::PipelineLayout{});
         owned_set_layouts_ = std::move(other.owned_set_layouts_);
+        set_layout_handles_ = std::move(other.set_layout_handles_);
     }
     return *this;
 }
@@ -35,6 +37,7 @@ PipelineLayout PipelineLayout::create(vk::Device device,
         .pushConstantRangeCount = static_cast<uint32_t>(push_constants.size()),
         .pPushConstantRanges = push_constants.data(),
     });
+    layout.set_layout_handles_.assign(set_layouts.begin(), set_layouts.end());
     return layout;
 }
 
@@ -57,11 +60,25 @@ PipelineLayout PipelineLayout::create_from_reflection(vk::Device device,
     return layout;
 }
 
+PipelineLayout PipelineLayout::create_from_reflection(vk::Device device,
+                                                      DescriptorSetLayoutCache& cache,
+                                                      std::span<const ShaderReflection> reflections) {
+    const PipelineReflection merged = merge_reflections(reflections);
+
+    std::vector<vk::DescriptorSetLayout> raw_layouts;
+    raw_layouts.reserve(merged.sets.size());
+    for (const DescriptorSetLayoutInfo& set : merged.sets)
+        raw_layouts.push_back(cache.get(set.bindings));
+
+    return create(device, raw_layouts, merged.push_constants);
+}
+
 void PipelineLayout::destroy() {
     if (layout_)
         device_.destroyPipelineLayout(layout_);
 
     owned_set_layouts_.clear();
+    set_layout_handles_.clear();
     device_ = nullptr;
     layout_ = nullptr;
 }

@@ -362,8 +362,10 @@ int main() {
 
         const std::array<vulcao::ShaderReflection, 2> stage_reflections{
             vertex_shader.reflection(), fragment_shader.reflection()};
+        vulcao::DescriptorSetLayoutCache layout_cache{ctx.device()};
         vulcao::PipelineLayout pipeline_layout =
-            vulcao::PipelineLayout::create_from_reflection(ctx.device(), stage_reflections);
+            vulcao::PipelineLayout::create_from_reflection(ctx.device(), layout_cache,
+                                                           stage_reflections);
         vulcao::Pipeline pipeline =
             vulcao::Pipeline::create_graphics(ctx.device(), pipeline_layout, pipeline_info);
 
@@ -374,8 +376,8 @@ int main() {
         vulcao::DescriptorPool descriptor_pool =
             vulcao::DescriptorPool::create(ctx.device(), descriptor_pool_size, 1);
         vulcao::DescriptorSet descriptor_set =
-            descriptor_pool.allocate(pipeline_layout.set_layouts()[0]);
-        descriptor_set.write_image(0, texture, sampler);
+            descriptor_pool.allocate(pipeline_layout.set_layout(0));
+        vulcao::DescriptorSetWriter{descriptor_set}.write_image(0, texture, sampler).flush();
 
         const std::array<CubeVertex, 24> vertices{{
             {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f}}, {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f}},
