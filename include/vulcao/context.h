@@ -44,6 +44,12 @@ struct ContextInfo {
 #else
     bool validation = true;
 #endif
+    /// @brief Severities requested from the debug messenger when validation is enabled.
+    vk::DebugUtilsMessageSeverityFlagsEXT validation_severity =
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo |
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::eError;
     /// @brief Create the instance without presentation extensions and skip the swapchain.
     bool headless = false;
     std::vector<const char*> extensions;

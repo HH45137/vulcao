@@ -23,8 +23,8 @@ layouts from SPIR-V reflection.
 - Reflection: descriptor sets, push constants and vertex attributes extracted from
   SPIR-V with SPIRV-Reflect, plus `make_vertex_layout`.
 - Logging: a global `set_log_callback` receives structured `LogMessage`s from the
-  library and from the validation layers; the default prints warnings, errors and
-  validation output to stderr.
+  library and from the validation layers; `set_log_level` filters them and the
+  default prints warnings, errors and validation output to stderr.
 
 ## Requirements
 

@@ -43,6 +43,27 @@ TEST_CASE("log callback receives structured messages") {
     CHECK(static_cast<bool>(vulcao::log_callback()));
 }
 
+TEST_CASE("set_log_level filters messages before the callback") {
+    vulcao::set_log_level(vulcao::LogLevel::trace);
+
+    int count = 0;
+    vulcao::set_log_callback([&](const vulcao::LogMessage&) { ++count; });
+
+    vulcao::set_log_level(vulcao::LogLevel::warning);
+    CHECK(vulcao::log_level() == vulcao::LogLevel::warning);
+
+    vulcao::log(vulcao::LogLevel::info, vulcao::LogCategory::general, "dropped");
+    vulcao::log(vulcao::LogLevel::warning, vulcao::LogCategory::general, "kept");
+    CHECK(count == 1);
+
+    vulcao::log(vulcao::LogLevel::debug, vulcao::LogCategory::validation, "dropped", "VUID");
+    CHECK(count == 1);
+
+    vulcao::set_log_callback({});
+    vulcao::set_log_level(vulcao::LogLevel::trace);
+    CHECK(vulcao::log_level() == vulcao::LogLevel::trace);
+}
+
 TEST_CASE("to_string names levels and categories") {
     CHECK(vulcao::to_string(vulcao::LogLevel::trace) == "trace");
     CHECK(vulcao::to_string(vulcao::LogLevel::debug) == "debug");

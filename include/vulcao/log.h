@@ -56,6 +56,18 @@ void set_log_callback(LogCallback callback);
 /// @return The current callback.
 LogCallback log_callback();
 
+/// @brief Sets the minimum level delivered to the callback.
+///
+/// Messages below the level are dropped before the callback is invoked. This
+/// also avoids the cost of formatting messages that would be filtered out.
+/// Defaults to LogLevel::trace, which delivers everything.
+/// @param level Minimum level to deliver.
+void set_log_level(LogLevel level);
+
+/// @brief Returns the minimum level delivered to the callback.
+/// @return The current minimum level.
+LogLevel log_level();
+
 /// @brief Default callback: writes warning/error and all validation/performance
 ///        messages to stderr. Drops general trace/debug/info messages.
 /// @param message Message to write.

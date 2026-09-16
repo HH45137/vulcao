@@ -9,6 +9,7 @@ namespace {
 
 std::mutex g_mutex;
 LogCallback g_callback = default_log_callback;
+LogLevel g_level = LogLevel::trace;
 
 }
 
@@ -52,11 +53,28 @@ LogCallback log_callback() {
     return g_callback;
 }
 
+void set_log_level(LogLevel level) {
+    std::lock_guard lock(g_mutex);
+    g_level = level;
+}
+
+LogLevel log_level() {
+    std::lock_guard lock(g_mutex);
+    return g_level;
+}
+
 void log(LogLevel level,
          LogCategory category,
          std::string_view message,
          std::string_view message_id) {
-    const LogCallback callback = log_callback();
+    LogCallback callback;
+    {
+        std::lock_guard lock(g_mutex);
+        if (level < g_level)
+            return;
+        callback = g_callback;
+    }
+
     if (callback)
         callback(LogMessage{level, category, message, message_id});
 }
