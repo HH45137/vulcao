@@ -1,0 +1,36 @@
+name: ci
+
+# Forgejo Actions (Codeberg). Mirrors .github/workflows/ci.yml, but:
+# - Windows is not covered here.
+# - The Vulkan SDK is installed from apt instead of jurplel/install-vulkan-sdk,
+#   which is not mirrored on code.forgejo.org. The sandbox is disabled, so no
+#   shader compiler is needed; only the loader and headers.
+# - Adjust runs-on to match your runner's label (e.g. "docker" or a custom one).
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake build-essential libvulkan-dev
+
+      - name: Configure
+        run: cmake -S . -B build -DVULCAO_BUILD_SANDBOX=OFF -DVULCAO_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -C Release
