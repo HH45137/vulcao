@@ -22,6 +22,9 @@ layouts from SPIR-V reflection.
   graphics/compute factories, specialization constants and `PipelineCache`.
 - Reflection: descriptor sets, push constants and vertex attributes extracted from
   SPIR-V with SPIRV-Reflect, plus `make_vertex_layout`.
+- Logging: a global `set_log_callback` receives structured `LogMessage`s from the
+  library and from the validation layers; the default prints warnings, errors and
+  validation output to stderr.
 
 ## Requirements
 
