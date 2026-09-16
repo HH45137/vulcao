@@ -5,6 +5,8 @@ name: ci
 # - The Vulkan SDK is installed from apt instead of jurplel/install-vulkan-sdk,
 #   which is not mirrored on code.forgejo.org. The sandbox is disabled, so no
 #   shader compiler is needed; only the loader and headers.
+# - Tests run against lavapipe (software Vulkan) so the device paths execute
+#   and the validation layers are exercised.
 # - Adjust runs-on to match your runner's label (e.g. "docker" or a custom one).
 
 on:
@@ -24,7 +26,11 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake build-essential libvulkan-dev
+          sudo apt-get install -y --no-install-recommends \
+            cmake build-essential libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers
+
+      - name: Check lavapipe ICD
+        run: test -f /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
 
       - name: Configure
         run: cmake -S . -B build -DVULCAO_BUILD_SANDBOX=OFF -DVULCAO_BUILD_TESTS=ON
@@ -32,5 +38,7 @@ jobs:
       - name: Build
         run: cmake --build build --config Release
 
-      - name: Test
+      - name: Test (lavapipe, validation)
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
         run: ctest --test-dir build --output-on-failure -C Release

@@ -19,6 +19,16 @@ jobs:
 
       - uses: jurplel/install-vulkan-sdk@v1
 
+      - name: Install lavapipe and validation layers
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers vulkan-validationlayers
+
+      - name: Check lavapipe ICD
+        if: runner.os == 'Linux'
+        run: test -f /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+
       - name: Configure
         run: cmake -S . -B build -DVULCAO_BUILD_SANDBOX=OFF -DVULCAO_BUILD_TESTS=ON
 
@@ -26,4 +36,11 @@ jobs:
         run: cmake --build build --config Release
 
       - name: Test
+        if: runner.os != 'Linux'
+        run: ctest --test-dir build --output-on-failure -C Release
+
+      - name: Test (lavapipe, validation)
+        if: runner.os == 'Linux'
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
         run: ctest --test-dir build --output-on-failure -C Release

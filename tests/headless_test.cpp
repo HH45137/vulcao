@@ -7,11 +7,27 @@
 #include <vulcao/buffer.h>
 #include <vulcao/command_buffer.h>
 #include <vulcao/context.h>
+#include <vulcao/log.h>
+
+namespace {
+
+/// Restores the global log level even if the test aborts early.
+struct LogLevelGuard {
+    vulcao::LogLevel previous = vulcao::log_level();
+    ~LogLevelGuard() { vulcao::set_log_level(previous); }
+};
+
+}
 
 TEST_CASE("headless context runs commands without a surface or swapchain") {
+    // Request validation so the device path is checked when the layers are
+    // installed; quiet the informational messages while doing so.
+    const LogLevelGuard log_level_guard;
+    vulcao::set_log_level(vulcao::LogLevel::warning);
+
     vulcao::ContextInfo info;
     info.headless = true;
-    info.validation = false;
+    info.validation = true;
 
     try {
         vulcao::Context context{info};
