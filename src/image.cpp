@@ -146,11 +146,11 @@ void Image::destroy() {
     image_ = VK_NULL_HANDLE;
     allocation_ = nullptr;
     view_ = VK_NULL_HANDLE;
-    extent_ = {};
+    extent_ = vk::Extent3D{};
     format_ = vk::Format::eUndefined;
     usage_ = {};
     layout_ = vk::ImageLayout::eUndefined;
-    range_ = {};
+    range_ = vk::ImageSubresourceRange{};
 }
 
 }
