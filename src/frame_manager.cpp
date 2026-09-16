@@ -11,6 +11,8 @@ FrameManager::FrameManager(Context& context, const FrameManagerInfo& info)
     : context_(context), device_(context.device()) {
     if (!context.initialized())
         throw std::runtime_error("FrameManager: the context must be initialized");
+    if (!context.swapchain())
+        throw std::runtime_error("FrameManager: the context must have a swapchain");
     if (info.frames_in_flight == 0)
         throw std::runtime_error("FrameManager: frames_in_flight must be at least 1");
 

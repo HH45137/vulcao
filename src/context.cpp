@@ -60,6 +60,8 @@ Context::~Context() {
 void Context::initialize(vk::SurfaceKHR surface, vk::Extent2D extent, SwapchainInfo swapchain_info) {
     if (initialized())
         throw std::runtime_error("Context::initialize called twice");
+    if (info_.headless)
+        throw std::runtime_error("Context::initialize: the context was created headless");
 
     surface_ = surface;
     swapchain_info_ = std::move(swapchain_info);
@@ -67,6 +69,18 @@ void Context::initialize(vk::SurfaceKHR surface, vk::Extent2D extent, SwapchainI
     create_device();
     create_allocator();
     create_swapchain({}, extent);
+    create_command_pool();
+}
+
+void Context::initialize() {
+    if (initialized())
+        throw std::runtime_error("Context::initialize called twice");
+    if (!info_.headless)
+        throw std::runtime_error("Context::initialize: ContextInfo::headless must be true");
+
+    pick_physical_device();
+    create_device();
+    create_allocator();
     create_command_pool();
 }
 
@@ -81,6 +95,7 @@ void Context::create_instance(const ContextInfo& info) {
     vkb::InstanceBuilder builder;
     builder.set_app_name(info.app_name.c_str())
         .set_app_version(info.app_version)
+        .set_headless(info.headless)
         .require_api_version(VK_VERSION_MAJOR(info.api_version), VK_VERSION_MINOR(info.api_version),
                              VK_VERSION_PATCH(info.api_version));
 
@@ -134,7 +149,9 @@ std::vector<PhysicalDeviceInfo> Context::enumerate_physical_devices() const {
 
 void Context::pick_physical_device() {
     vkb::PhysicalDeviceSelector selector{vkb_instance_};
-    selector.set_surface(surface_).set_minimum_version(1, 3);
+    if (!info_.headless)
+        selector.set_surface(surface_);
+    selector.set_minimum_version(1, 3);
 
     const DeviceFeatures& wanted = info_.device_features;
     selector.set_required_features(vk::PhysicalDeviceFeatures{
@@ -206,7 +223,9 @@ void Context::create_device() {
     graphics_queue_family_index_ =
         check(vkb_device_.get_queue_index(vkb::QueueType::graphics), "get graphics queue index");
     graphics_queue_ = vk::Queue{check(vkb_device_.get_queue(vkb::QueueType::graphics), "get graphics queue")};
-    present_queue_ = vk::Queue{check(vkb_device_.get_queue(vkb::QueueType::present), "get present queue")};
+    if (!info_.headless)
+        present_queue_ =
+            vk::Queue{check(vkb_device_.get_queue(vkb::QueueType::present), "get present queue")};
 
     if (info_.separate_compute_queue) {
         const vkb::Result<uint32_t> index = vkb_device_.get_queue_index(vkb::QueueType::compute);
@@ -232,12 +251,13 @@ void Context::create_device() {
         }
     }
 
+    std::string present = "none";
+    if (!info_.headless)
+        present = std::to_string(check(vkb_device_.get_queue_index(vkb::QueueType::present),
+                                       "get present queue index"));
+
     log(LogLevel::info, "queues: graphics=" + std::to_string(graphics_queue_family_index_) +
-                            ", present=" +
-                            std::to_string(
-                                check(vkb_device_.get_queue_index(vkb::QueueType::present),
-                                      "get present queue index")) +
-                            ", compute=" +
+                            ", present=" + present + ", compute=" +
                             (has_compute_queue_ ? std::to_string(compute_queue_family_index_) : "none") +
                             ", transfer=" +
                             (has_transfer_queue_ ? std::to_string(transfer_queue_family_index_) : "none"));
@@ -311,6 +331,8 @@ void Context::destroy_swapchain_resources() {
 void Context::recreate_swapchain(vk::Extent2D extent) {
     if (!initialized())
         throw std::runtime_error("Context::recreate_swapchain before initialize");
+    if (info_.headless)
+        throw std::runtime_error("Context::recreate_swapchain: the context is headless");
 
     device_.waitIdle();
 

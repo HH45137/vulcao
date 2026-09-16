@@ -8,7 +8,8 @@ layouts from SPIR-V reflection.
 
 - `Context`: instance, physical device, logical device, swapchain, queues and
   command pool, with configurable device features/extensions and dedicated
-  compute/transfer queues.
+  compute/transfer queues. Created headless (`ContextInfo::headless`) it skips
+  the surface and swapchain for compute-only or offscreen work.
 - Resources: VMA-backed `Allocator`, `Buffer`, `Image` (2D/depth factories,
   mipmap generation), `Sampler` and `CommandPool`.
 - Synchronization: `Fence`, binary and timeline `Semaphore`, `QueryPool` and a

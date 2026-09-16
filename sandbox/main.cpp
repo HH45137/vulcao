@@ -343,7 +343,27 @@ bool render_frame(vulcao::Context& ctx,
 
 }
 
-int main() {
+int main(int argc, char** argv) {
+    const bool headless = argc > 1 && std::string_view(argv[1]) == "--headless";
+    if (headless) {
+        try {
+            vulcao::Context ctx{{.app_name = "vulcao-headless",
+                                 .headless = true,
+                                 .device_features = {.timeline_semaphore = true},
+                                 .separate_compute_queue = true,
+                                 .separate_transfer_queue = true,
+                                 .log = [](vulcao::LogLevel, std::string_view message) {
+                                     std::cout << message << std::endl;
+                                 }}};
+            ctx.initialize();
+            run_compute_test(ctx);
+        } catch (const std::exception& e) {
+            std::cerr << "fatal: " << e.what() << std::endl;
+            return 1;
+        }
+        return 0;
+    }
+
     if (!glfwInit()) {
         std::cerr << "glfwInit failed" << std::endl;
         return 1;

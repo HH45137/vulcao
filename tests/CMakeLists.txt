@@ -1,5 +1,6 @@
 add_executable(vulcao_tests
     barrier_test.cpp
+    headless_test.cpp
     reflection_test.cpp
     specialization_test.cpp
     vertex_layout_test.cpp

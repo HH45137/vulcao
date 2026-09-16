@@ -50,6 +50,8 @@ struct ContextInfo {
 #else
     bool validation = true;
 #endif
+    /// @brief Create the instance without presentation extensions and skip the swapchain.
+    bool headless = false;
     std::vector<const char*> extensions;
     std::vector<const char*> layers;
     std::vector<const char*> device_extensions;
@@ -104,12 +106,20 @@ public:
     /// @param swapchain_info Swapchain creation parameters.
     void initialize(vk::SurfaceKHR surface, vk::Extent2D extent, SwapchainInfo swapchain_info = {});
 
+    /// @brief Picks a device and creates the allocator, command pool and queues without a swapchain.
+    ///
+    /// Requires ContextInfo::headless. No surface is created and present_queue() stays null.
+    void initialize();
+
     /// @brief Recreates the swapchain with a new extent.
     /// @param extent New swapchain extent.
     void recreate_swapchain(vk::Extent2D extent);
 
     /// @brief Waits for the device to become idle.
     void wait_idle();
+
+    /// @brief Returns true if the context was created without a surface or swapchain.
+    bool headless() const { return info_.headless; }
 
     /// @brief Returns true if VK_EXT_debug_utils is enabled.
     bool debug_utils_enabled() const { return debug_utils_enabled_; }
