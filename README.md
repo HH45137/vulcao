@@ -10,10 +10,12 @@ layouts from SPIR-V reflection.
   command pool, with configurable device features/extensions and dedicated
   compute/transfer queues.
 - Resources: VMA-backed `Allocator`, `Buffer`, `Image` (2D/depth factories,
-  mipmap generation), `Sampler`.
-- Synchronization: `Fence`, binary and timeline `Semaphore`, `QueryPool`.
+  mipmap generation), `Sampler` and `CommandPool`.
+- Synchronization: `Fence`, binary and timeline `Semaphore`, `QueryPool` and a
+  `FrameManager` that owns frames in flight, swapchain acquire and present.
 - Recording: `CommandBuffer` with layout transitions, copies, mipmaps, draws,
-  dispatches, queries, dynamic state and debug labels.
+  dispatches, queries, dynamic state, debug labels and queue family ownership
+  transfers (release/acquire).
 - Pipelines: `ShaderModule` with SPIR-V reflection, `DescriptorSetLayout/Pool/Set`
   with a batching writer and layout cache, `PipelineLayout`, `Pipeline` with
   graphics/compute factories, specialization constants and `PipelineCache`.

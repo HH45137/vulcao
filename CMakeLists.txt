@@ -33,9 +33,11 @@ add_library(vulcao STATIC
     src/barrier.cpp
     src/buffer.cpp
     src/command_buffer.cpp
+    src/command_pool.cpp
     src/context.cpp
     src/descriptor_set.cpp
     src/fence.cpp
+    src/frame_manager.cpp
     src/image.cpp
     src/pipeline.cpp
     src/pipeline_cache.cpp

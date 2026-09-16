@@ -19,8 +19,10 @@
 
 #include "vulcao/buffer.h"
 #include "vulcao/command_buffer.h"
+#include "vulcao/command_pool.h"
 #include "vulcao/context.h"
 #include "vulcao/descriptor_set.h"
+#include "vulcao/frame_manager.h"
 #include "vulcao/image.h"
 #include "vulcao/pipeline.h"
 #include "vulcao/pipeline_cache.h"
@@ -124,25 +126,102 @@ void run_compute_test(vulcao::Context& ctx) {
         ctx.allocator(), data_bytes, vk::BufferUsageFlagBits::eTransferDst,
         VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
 
-    vulcao::CommandBuffer cmd = vulcao::CommandBuffer::allocate(ctx.device(), ctx.command_pool());
     const vk::DescriptorSet raw_set = set.handle();
-    cmd.begin();
-    cmd.bind_pipeline(vk::PipelineBindPoint::eCompute, pipeline.handle());
-    cmd.bind_descriptor_sets(vk::PipelineBindPoint::eCompute, layout.handle(), raw_set);
-    cmd.dispatch(element_count / 64);
-    cmd.buffer_barrier(buffer.handle(),
-                       vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite,
-                       vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
-    cmd.copy_buffer(buffer.handle(), readback.handle(), data_bytes);
-    cmd.end();
+
+    const bool offload = ctx.has_compute_queue() &&
+                         ctx.compute_queue_family_index() != ctx.graphics_queue_family_index();
+    const uint32_t graphics_family = ctx.graphics_queue_family_index();
+    const uint32_t compute_family = offload ? ctx.compute_queue_family_index() : graphics_family;
+    const vk::Queue compute_queue = offload ? ctx.compute_queue() : ctx.graphics_queue();
 
     vulcao::Semaphore timeline = vulcao::Semaphore::create_timeline(ctx.device());
-    ctx.submit(ctx.graphics_queue(), cmd.handle(), timeline, 1);
-    timeline.wait(1);
-    std::cout << "timeline semaphore value: " << timeline.value() << std::endl;
+    uint64_t signal_value = 0;
 
-    timeline.signal(2);
-    timeline.wait(2);
+    auto submit_timeline = [&](vk::Queue queue, vk::CommandBuffer cmd, uint64_t wait_value) {
+        const uint64_t signal = ++signal_value;
+        const vk::Semaphore semaphore = timeline.handle();
+        uint64_t wait = wait_value;
+        const vk::TimelineSemaphoreSubmitInfo timeline_info{
+            .waitSemaphoreValueCount = wait_value > 0 ? 1u : 0u,
+            .pWaitSemaphoreValues = wait_value > 0 ? &wait : nullptr,
+            .signalSemaphoreValueCount = 1,
+            .pSignalSemaphoreValues = &signal,
+        };
+        vk::PipelineStageFlags wait_stage = vk::PipelineStageFlagBits::eAllCommands;
+        const uint32_t wait_count = wait_value > 0 ? 1u : 0u;
+        queue.submit(vk::SubmitInfo{
+            .pNext = &timeline_info,
+            .waitSemaphoreCount = wait_count,
+            .pWaitSemaphores = wait_count ? &semaphore : nullptr,
+            .pWaitDstStageMask = wait_count ? &wait_stage : nullptr,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &cmd,
+            .signalSemaphoreCount = 1,
+            .pSignalSemaphores = &semaphore,
+        });
+        return signal;
+    };
+
+    if (offload) {
+        vulcao::CommandPool graphics_pool =
+            vulcao::CommandPool::create(ctx.device(), graphics_family);
+        vulcao::CommandPool compute_pool =
+            vulcao::CommandPool::create(ctx.device(), compute_family);
+
+        vulcao::CommandBuffer release_cmd = graphics_pool.allocate();
+        release_cmd.begin();
+        release_cmd.release_buffer(buffer.handle(), graphics_family, compute_family,
+                                   vk::PipelineStageFlagBits2::eTransfer,
+                                   vk::AccessFlagBits2::eTransferWrite);
+        release_cmd.end();
+        const uint64_t release_done =
+            submit_timeline(ctx.graphics_queue(), release_cmd.handle(), 0);
+
+        vulcao::CommandBuffer compute_cmd = compute_pool.allocate();
+        compute_cmd.begin();
+        compute_cmd.acquire_buffer(
+            buffer.handle(), graphics_family, compute_family,
+            vk::PipelineStageFlagBits2::eComputeShader,
+            vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite);
+        compute_cmd.bind_pipeline(vk::PipelineBindPoint::eCompute, pipeline.handle());
+        compute_cmd.bind_descriptor_sets(vk::PipelineBindPoint::eCompute, layout.handle(), raw_set);
+        compute_cmd.dispatch(element_count / 64);
+        compute_cmd.release_buffer(buffer.handle(), compute_family, graphics_family,
+                                   vk::PipelineStageFlagBits2::eComputeShader,
+                                   vk::AccessFlagBits2::eShaderWrite);
+        compute_cmd.end();
+        const uint64_t compute_done =
+            submit_timeline(compute_queue, compute_cmd.handle(), release_done);
+
+        vulcao::CommandBuffer copy_cmd = graphics_pool.allocate();
+        copy_cmd.begin();
+        copy_cmd.acquire_buffer(buffer.handle(), compute_family, graphics_family,
+                                vk::PipelineStageFlagBits2::eTransfer,
+                                vk::AccessFlagBits2::eTransferRead);
+        copy_cmd.copy_buffer(buffer.handle(), readback.handle(), data_bytes);
+        copy_cmd.end();
+        const uint64_t copy_done =
+            submit_timeline(ctx.graphics_queue(), copy_cmd.handle(), compute_done);
+        timeline.wait(copy_done);
+    } else {
+        vulcao::CommandBuffer cmd =
+            vulcao::CommandBuffer::allocate(ctx.device(), ctx.command_pool());
+        cmd.begin();
+        cmd.bind_pipeline(vk::PipelineBindPoint::eCompute, pipeline.handle());
+        cmd.bind_descriptor_sets(vk::PipelineBindPoint::eCompute, layout.handle(), raw_set);
+        cmd.dispatch(element_count / 64);
+        cmd.buffer_barrier(buffer.handle(),
+                           vk::PipelineStageFlagBits2::eComputeShader,
+                           vk::AccessFlagBits2::eShaderWrite,
+                           vk::PipelineStageFlagBits2::eTransfer,
+                           vk::AccessFlagBits2::eTransferRead);
+        cmd.copy_buffer(buffer.handle(), readback.handle(), data_bytes);
+        cmd.end();
+        const uint64_t done = submit_timeline(ctx.graphics_queue(), cmd.handle(), 0);
+        timeline.wait(done);
+    }
+
+    std::cout << "timeline semaphore value: " << timeline.value() << std::endl;
 
     readback.invalidate();
     const auto* result = static_cast<const uint32_t*>(readback.map());
@@ -151,7 +230,9 @@ void run_compute_test(vulcao::Context& ctx) {
         ok = ok && result[i] == initial[i] * 2 + 1;
     readback.unmap();
 
-    std::cout << "compute dispatch: " << (ok ? "ok" : "MISMATCH") << std::endl;
+    std::cout << "compute dispatch on "
+              << (offload ? "dedicated compute queue" : "graphics queue") << ": "
+              << (ok ? "ok" : "MISMATCH") << std::endl;
 }
 
 void record_frame(vulcao::CommandBuffer& cmd,
@@ -207,11 +288,9 @@ void record_frame(vulcao::CommandBuffer& cmd,
         .pDepthAttachment = &depth_attachment,
     };
 
-    cmd.reset();
-    cmd.begin();
     cmd.begin_debug_label("frame", {0.2f, 0.5f, 0.9f, 1.0f});
     cmd.transition(image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal,
-                   range);
+                   range, vulcao::FrameManager::acquire_wait_stage);
     cmd.transition(depth, vk::ImageLayout::eDepthStencilAttachmentOptimal);
     cmd.begin_rendering(rendering_info);
     cmd.bind_pipeline(vk::PipelineBindPoint::eGraphics, pipeline.handle());
@@ -228,22 +307,17 @@ void record_frame(vulcao::CommandBuffer& cmd,
     cmd.transition(image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR,
                    range);
     cmd.end_debug_label();
-    cmd.end();
 }
 
-void render_frame(vulcao::Context& ctx,
+bool render_frame(vulcao::Context& ctx,
+                  vulcao::FrameManager& frames,
                   const vulcao::Pipeline& pipeline,
                   const vulcao::PipelineLayout& pipeline_layout,
                   const vulcao::DescriptorSet& descriptor_set,
                   const vulcao::Buffer& vertex_buffer,
                   const vulcao::Buffer& index_buffer,
                   vulcao::Image& depth,
-                  float time_seconds,
-                  const vulcao::Semaphore& image_available,
-                  const vulcao::Semaphore& render_finished) {
-    vk::Device device = ctx.device();
-    vk::SwapchainKHR swapchain = ctx.swapchain();
-    vulcao::CommandBuffer& cmd = ctx.immediate_command_buffer();
+                  float time_seconds) {
     const vk::Extent2D extent = ctx.swapchain_extent();
 
     const float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
@@ -256,36 +330,15 @@ void render_frame(vulcao::Context& ctx,
         glm::rotate(glm::mat4(1.0f), time_seconds * 0.6f, glm::vec3(1.0f, 0.0f, 0.0f));
     const Transform transform = make_transform(projection * view * model);
 
-    uint32_t image_index =
-        device.acquireNextImageKHR(swapchain, UINT64_MAX, image_available.handle()).value;
+    vulcao::Frame frame = frames.begin_frame();
+    const uint32_t image_index = frame.image_index;
 
-    record_frame(cmd, pipeline, pipeline_layout, descriptor_set, vertex_buffer, index_buffer, depth,
-                 transform, ctx.swapchain_images()[image_index],
+    record_frame(*frame.command_buffer, pipeline, pipeline_layout, descriptor_set, vertex_buffer,
+                 index_buffer, depth, transform, ctx.swapchain_images()[image_index],
                  ctx.swapchain_image_views()[image_index], extent);
 
-    const vk::Semaphore wait_semaphore = image_available.handle();
-    const vk::Semaphore signal_semaphore = render_finished.handle();
-    vk::PipelineStageFlags wait_stage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
-    const vk::CommandBuffer raw_cmd = cmd.handle();
-    ctx.submit(vk::SubmitInfo{
-        .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &wait_semaphore,
-        .pWaitDstStageMask = &wait_stage,
-        .commandBufferCount = 1,
-        .pCommandBuffers = &raw_cmd,
-        .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &signal_semaphore,
-    });
-
-    const vk::Result present_result = ctx.present_queue().presentKHR(vk::PresentInfoKHR{
-        .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &signal_semaphore,
-        .swapchainCount = 1,
-        .pSwapchains = &swapchain,
-        .pImageIndices = &image_index,
-    });
-    (void)present_result;
-    device.waitIdle();
+    frames.end_frame(frame);
+    return frames.present(frame);
 }
 
 }
@@ -426,27 +479,24 @@ int main() {
 
         vulcao::Image depth = vulcao::Image::create_depth(ctx.allocator(), ctx.swapchain_extent());
 
-        vulcao::Semaphore image_available = vulcao::Semaphore::create(ctx.device());
-        vulcao::Semaphore render_finished = vulcao::Semaphore::create(ctx.device());
+        vulcao::FrameManager frame_manager{ctx};
 
         auto recreate_swapchain = [&]() {
             vk::Extent2D extent = framebuffer_extent(window);
             if (extent.width == 0 || extent.height == 0)
                 return false;
-            ctx.recreate_swapchain(extent);
+            frame_manager.recreate_swapchain(extent);
             depth = vulcao::Image::create_depth(ctx.allocator(), ctx.swapchain_extent());
             return true;
         };
 
         auto redraw = [&](float time_seconds) {
             try {
-                render_frame(ctx, pipeline, pipeline_layout, descriptor_set, vertex_buffer,
-                             index_buffer, depth, time_seconds, image_available, render_finished);
+                if (!render_frame(ctx, frame_manager, pipeline, pipeline_layout, descriptor_set,
+                                  vertex_buffer, index_buffer, depth, time_seconds))
+                    recreate_swapchain();
             } catch (const vk::OutOfDateKHRError&) {
-                if (!recreate_swapchain())
-                    return;
-                render_frame(ctx, pipeline, pipeline_layout, descriptor_set, vertex_buffer,
-                             index_buffer, depth, time_seconds, image_available, render_finished);
+                recreate_swapchain();
             }
         };
 

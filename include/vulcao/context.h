@@ -12,6 +12,7 @@
 
 #include "vulcao/allocator.h"
 #include "vulcao/command_buffer.h"
+#include "vulcao/command_pool.h"
 #include "vulcao/fence.h"
 #include "vulcao/semaphore.h"
 
@@ -283,7 +284,7 @@ public:
     const std::vector<vk::ImageView>& swapchain_image_views() const { return swapchain_image_views_; }
 
     /// @brief Returns the command pool used for one-time commands.
-    vk::CommandPool command_pool() const { return command_pool_; }
+    vk::CommandPool command_pool() const { return command_pool_.handle(); }
 
     /// @brief Returns the command buffer used by immediate().
     CommandBuffer& immediate_command_buffer() { return immediate_command_buffer_; }
@@ -347,7 +348,7 @@ private:
     std::vector<vk::ImageView> swapchain_image_views_;
     SwapchainInfo swapchain_info_;
 
-    vk::CommandPool command_pool_;
+    CommandPool command_pool_;
     CommandBuffer immediate_command_buffer_;
     Fence submit_fence_;
 };

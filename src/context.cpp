@@ -39,7 +39,7 @@ Context::~Context() {
         if (command_pool_) {
             immediate_command_buffer_.destroy();
             submit_fence_.destroy();
-            device_.destroyCommandPool(command_pool_);
+            command_pool_.destroy();
         }
 
         destroy_swapchain_resources();
@@ -138,11 +138,11 @@ void Context::pick_physical_device() {
 
     const DeviceFeatures& wanted = info_.device_features;
     selector.set_required_features(vk::PhysicalDeviceFeatures{
+        .drawIndirectFirstInstance = wanted.draw_indirect_first_instance ? VK_TRUE : VK_FALSE,
         .depthClamp = wanted.depth_clamp ? VK_TRUE : VK_FALSE,
         .fillModeNonSolid = wanted.fill_mode_non_solid ? VK_TRUE : VK_FALSE,
         .wideLines = wanted.wide_lines ? VK_TRUE : VK_FALSE,
         .samplerAnisotropy = wanted.sampler_anisotropy ? VK_TRUE : VK_FALSE,
-        .drawIndirectFirstInstance = wanted.draw_indirect_first_instance ? VK_TRUE : VK_FALSE,
         .shaderInt64 = wanted.shader_int64 ? VK_TRUE : VK_FALSE,
     });
 
@@ -293,14 +293,11 @@ void Context::create_swapchain(vk::SwapchainKHR oldSwapchain, vk::Extent2D exten
 }
 
 void Context::create_command_pool() {
-    command_pool_ = device_.createCommandPool(vk::CommandPoolCreateInfo{
-        .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-        .queueFamilyIndex = graphics_queue_family_index_,
-    });
+    command_pool_ = CommandPool::create(device_, graphics_queue_family_index_,
+                                        vk::CommandPoolCreateFlagBits::eResetCommandBuffer);
 
-    immediate_command_buffer_ =
-        CommandBuffer::allocate(device_, command_pool_, vk::CommandBufferLevel::ePrimary,
-                                debug_utils_enabled_);
+    immediate_command_buffer_ = command_pool_.allocate(vk::CommandBufferLevel::ePrimary,
+                                                       debug_utils_enabled_);
     submit_fence_ = Fence::create(device_);
 }
 
