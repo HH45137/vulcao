@@ -1,5 +1,6 @@
 #include "vulcao/command_buffer.h"
 
+#include "vulcao/barrier.h"
 #include "vulcao/buffer.h"
 #include "vulcao/image.h"
 
@@ -9,47 +10,6 @@
 
 namespace vulcao {
 namespace {
-
-vk::PipelineStageFlags2 stage_for_layout(vk::ImageLayout layout) {
-    switch (layout) {
-        case vk::ImageLayout::eUndefined:
-            return vk::PipelineStageFlagBits2::eTopOfPipe;
-        case vk::ImageLayout::eTransferSrcOptimal:
-        case vk::ImageLayout::eTransferDstOptimal:
-            return vk::PipelineStageFlagBits2::eTransfer;
-        case vk::ImageLayout::eColorAttachmentOptimal:
-            return vk::PipelineStageFlagBits2::eColorAttachmentOutput;
-        case vk::ImageLayout::eDepthStencilAttachmentOptimal:
-            return vk::PipelineStageFlagBits2::eEarlyFragmentTests |
-                   vk::PipelineStageFlagBits2::eLateFragmentTests;
-        case vk::ImageLayout::eShaderReadOnlyOptimal:
-            return vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eComputeShader;
-        case vk::ImageLayout::ePresentSrcKHR:
-            return vk::PipelineStageFlagBits2::eBottomOfPipe;
-        default:
-            return vk::PipelineStageFlagBits2::eAllCommands;
-    }
-}
-
-vk::AccessFlags2 access_for_layout(vk::ImageLayout layout) {
-    switch (layout) {
-        case vk::ImageLayout::eUndefined:
-        case vk::ImageLayout::ePresentSrcKHR:
-            return {};
-        case vk::ImageLayout::eTransferSrcOptimal:
-            return vk::AccessFlagBits2::eTransferRead;
-        case vk::ImageLayout::eTransferDstOptimal:
-            return vk::AccessFlagBits2::eTransferWrite;
-        case vk::ImageLayout::eColorAttachmentOptimal:
-            return vk::AccessFlagBits2::eColorAttachmentWrite;
-        case vk::ImageLayout::eDepthStencilAttachmentOptimal:
-            return vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
-        case vk::ImageLayout::eShaderReadOnlyOptimal:
-            return vk::AccessFlagBits2::eShaderRead;
-        default:
-            return vk::AccessFlagBits2::eMemoryRead;
-    }
-}
 
 vk::ImageSubresourceLayers single_layer(const vk::ImageSubresourceRange& range) {
     return vk::ImageSubresourceLayers{
@@ -221,14 +181,16 @@ CommandBuffer& CommandBuffer::buffer_barrier(vk::Buffer buffer,
                                              vk::PipelineStageFlags2 dst_stage,
                                              vk::AccessFlags2 dst_access,
                                              vk::DeviceSize offset,
-                                             vk::DeviceSize size) {
+                                             vk::DeviceSize size,
+                                             uint32_t src_queue_family,
+                                             uint32_t dst_queue_family) {
     const vk::BufferMemoryBarrier2 buffer_memory_barrier{
         .srcStageMask = src_stage,
         .srcAccessMask = src_access,
         .dstStageMask = dst_stage,
         .dstAccessMask = dst_access,
-        .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-        .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+        .srcQueueFamilyIndex = src_queue_family,
+        .dstQueueFamilyIndex = dst_queue_family,
         .buffer = buffer,
         .offset = offset,
         .size = size,
@@ -241,6 +203,26 @@ CommandBuffer& CommandBuffer::buffer_barrier(vk::Buffer buffer,
     return *this;
 }
 
+CommandBuffer& CommandBuffer::release_buffer(vk::Buffer buffer,
+                                             uint32_t producer_queue_family,
+                                             uint32_t consumer_queue_family,
+                                             vk::PipelineStageFlags2 src_stage,
+                                             vk::AccessFlags2 src_access) {
+    return buffer_barrier(buffer, src_stage, src_access, vk::PipelineStageFlagBits2::eNone,
+                          vk::AccessFlagBits2::eNone, 0, VK_WHOLE_SIZE, producer_queue_family,
+                          consumer_queue_family);
+}
+
+CommandBuffer& CommandBuffer::acquire_buffer(vk::Buffer buffer,
+                                             uint32_t producer_queue_family,
+                                             uint32_t consumer_queue_family,
+                                             vk::PipelineStageFlags2 dst_stage,
+                                             vk::AccessFlags2 dst_access) {
+    return buffer_barrier(buffer, vk::PipelineStageFlagBits2::eNone, vk::AccessFlagBits2::eNone,
+                          dst_stage, dst_access, 0, VK_WHOLE_SIZE, producer_queue_family,
+                          consumer_queue_family);
+}
+
 CommandBuffer& CommandBuffer::transition(vk::Image image,
                                          vk::ImageLayout old_layout,
                                          vk::ImageLayout new_layout,
@@ -248,7 +230,9 @@ CommandBuffer& CommandBuffer::transition(vk::Image image,
                                          vk::PipelineStageFlags2 src_stage,
                                          vk::AccessFlags2 src_access,
                                          vk::PipelineStageFlags2 dst_stage,
-                                         vk::AccessFlags2 dst_access) {
+                                         vk::AccessFlags2 dst_access,
+                                         uint32_t src_queue_family,
+                                         uint32_t dst_queue_family) {
     if (!src_stage)
         src_stage = stage_for_layout(old_layout);
     if (!src_access)
@@ -265,8 +249,8 @@ CommandBuffer& CommandBuffer::transition(vk::Image image,
         .dstAccessMask = dst_access,
         .oldLayout = old_layout,
         .newLayout = new_layout,
-        .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-        .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+        .srcQueueFamilyIndex = src_queue_family,
+        .dstQueueFamilyIndex = dst_queue_family,
         .image = image,
         .subresourceRange = range,
     };
@@ -288,6 +272,68 @@ CommandBuffer& CommandBuffer::transition(Image& image,
     transition(image.handle(), old_layout, new_layout, image.subresource_range(), src_stage, src_access,
                dst_stage, dst_access);
     image.set_layout(new_layout);
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::release_image(Image& image,
+                                            uint32_t producer_queue_family,
+                                            uint32_t consumer_queue_family,
+                                            vk::PipelineStageFlags2 src_stage,
+                                            vk::AccessFlags2 src_access) {
+    const vk::ImageLayout layout = image.layout();
+    if (!src_stage)
+        src_stage = stage_for_layout(layout);
+    if (!src_access)
+        src_access = access_for_layout(layout);
+
+    const vk::ImageMemoryBarrier2 image_barrier{
+        .srcStageMask = src_stage,
+        .srcAccessMask = src_access,
+        .dstStageMask = vk::PipelineStageFlagBits2::eNone,
+        .dstAccessMask = vk::AccessFlagBits2::eNone,
+        .oldLayout = layout,
+        .newLayout = layout,
+        .srcQueueFamilyIndex = producer_queue_family,
+        .dstQueueFamilyIndex = consumer_queue_family,
+        .image = image.handle(),
+        .subresourceRange = image.subresource_range(),
+    };
+
+    cmd_.pipelineBarrier2(vk::DependencyInfo{
+        .imageMemoryBarrierCount = 1,
+        .pImageMemoryBarriers = &image_barrier,
+    });
+    return *this;
+}
+
+CommandBuffer& CommandBuffer::acquire_image(Image& image,
+                                            uint32_t producer_queue_family,
+                                            uint32_t consumer_queue_family,
+                                            vk::PipelineStageFlags2 dst_stage,
+                                            vk::AccessFlags2 dst_access) {
+    const vk::ImageLayout layout = image.layout();
+    if (!dst_stage)
+        dst_stage = stage_for_layout(layout);
+    if (!dst_access)
+        dst_access = access_for_layout(layout);
+
+    const vk::ImageMemoryBarrier2 image_barrier{
+        .srcStageMask = vk::PipelineStageFlagBits2::eNone,
+        .srcAccessMask = vk::AccessFlagBits2::eNone,
+        .dstStageMask = dst_stage,
+        .dstAccessMask = dst_access,
+        .oldLayout = layout,
+        .newLayout = layout,
+        .srcQueueFamilyIndex = producer_queue_family,
+        .dstQueueFamilyIndex = consumer_queue_family,
+        .image = image.handle(),
+        .subresourceRange = image.subresource_range(),
+    };
+
+    cmd_.pipelineBarrier2(vk::DependencyInfo{
+        .imageMemoryBarrierCount = 1,
+        .pImageMemoryBarriers = &image_barrier,
+    });
     return *this;
 }
 

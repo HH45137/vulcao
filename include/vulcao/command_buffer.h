@@ -113,6 +113,8 @@ public:
     /// @param dst_access Destination access flags.
     /// @param offset Byte offset of the range.
     /// @param size Size of the range, or VK_WHOLE_SIZE.
+    /// @param src_queue_family Queue family that currently owns the buffer, or VK_QUEUE_FAMILY_IGNORED.
+    /// @param dst_queue_family Queue family that receives ownership, or VK_QUEUE_FAMILY_IGNORED.
     /// @return This command buffer.
     CommandBuffer& buffer_barrier(vk::Buffer buffer,
                                   vk::PipelineStageFlags2 src_stage,
@@ -120,7 +122,35 @@ public:
                                   vk::PipelineStageFlags2 dst_stage,
                                   vk::AccessFlags2 dst_access,
                                   vk::DeviceSize offset = 0,
-                                  vk::DeviceSize size = VK_WHOLE_SIZE);
+                                  vk::DeviceSize size = VK_WHOLE_SIZE,
+                                  uint32_t src_queue_family = VK_QUEUE_FAMILY_IGNORED,
+                                  uint32_t dst_queue_family = VK_QUEUE_FAMILY_IGNORED);
+
+    /// @brief Releases ownership of a buffer to another queue family.
+    /// @param buffer Buffer to release.
+    /// @param producer_queue_family Queue family that currently owns the buffer.
+    /// @param consumer_queue_family Queue family that receives ownership.
+    /// @param src_stage Stages that produced the writes.
+    /// @param src_access Writes to make visible.
+    /// @return This command buffer.
+    CommandBuffer& release_buffer(vk::Buffer buffer,
+                                  uint32_t producer_queue_family,
+                                  uint32_t consumer_queue_family,
+                                  vk::PipelineStageFlags2 src_stage,
+                                  vk::AccessFlags2 src_access);
+
+    /// @brief Acquires ownership of a buffer from another queue family.
+    /// @param buffer Buffer to acquire.
+    /// @param producer_queue_family Queue family that released the buffer.
+    /// @param consumer_queue_family Queue family that receives ownership.
+    /// @param dst_stage Stages that will access the buffer.
+    /// @param dst_access Accesses to make available.
+    /// @return This command buffer.
+    CommandBuffer& acquire_buffer(vk::Buffer buffer,
+                                  uint32_t producer_queue_family,
+                                  uint32_t consumer_queue_family,
+                                  vk::PipelineStageFlags2 dst_stage,
+                                  vk::AccessFlags2 dst_access);
 
     /// @brief Transitions an image layout using raw handles.
     /// @param image Image to transition.
@@ -131,6 +161,8 @@ public:
     /// @param src_access Source access. Derived from old_layout when zero.
     /// @param dst_stage Destination stages. Derived from new_layout when zero.
     /// @param dst_access Destination access. Derived from new_layout when zero.
+    /// @param src_queue_family Queue family that currently owns the image, or VK_QUEUE_FAMILY_IGNORED.
+    /// @param dst_queue_family Queue family that receives ownership, or VK_QUEUE_FAMILY_IGNORED.
     /// @return This command buffer.
     CommandBuffer& transition(vk::Image image,
                               vk::ImageLayout old_layout,
@@ -139,7 +171,9 @@ public:
                               vk::PipelineStageFlags2 src_stage = {},
                               vk::AccessFlags2 src_access = {},
                               vk::PipelineStageFlags2 dst_stage = {},
-                              vk::AccessFlags2 dst_access = {});
+                              vk::AccessFlags2 dst_access = {},
+                              uint32_t src_queue_family = VK_QUEUE_FAMILY_IGNORED,
+                              uint32_t dst_queue_family = VK_QUEUE_FAMILY_IGNORED);
 
     /// @brief Transitions an image layout and updates its tracked layout.
     /// @param image Image to transition.
@@ -155,6 +189,32 @@ public:
                               vk::AccessFlags2 src_access = {},
                               vk::PipelineStageFlags2 dst_stage = {},
                               vk::AccessFlags2 dst_access = {});
+
+    /// @brief Releases ownership of an image to another queue family.
+    /// @param image Image to release. Its tracked layout is unchanged.
+    /// @param producer_queue_family Queue family that currently owns the image.
+    /// @param consumer_queue_family Queue family that receives ownership.
+    /// @param src_stage Stages that produced the writes. Derived from the tracked layout when zero.
+    /// @param src_access Writes to make visible. Derived from the tracked layout when zero.
+    /// @return This command buffer.
+    CommandBuffer& release_image(Image& image,
+                                 uint32_t producer_queue_family,
+                                 uint32_t consumer_queue_family,
+                                 vk::PipelineStageFlags2 src_stage = {},
+                                 vk::AccessFlags2 src_access = {});
+
+    /// @brief Acquires ownership of an image from another queue family.
+    /// @param image Image to acquire. Its tracked layout is unchanged.
+    /// @param producer_queue_family Queue family that released the image.
+    /// @param consumer_queue_family Queue family that receives ownership.
+    /// @param dst_stage Stages that will access the image. Derived from the tracked layout when zero.
+    /// @param dst_access Accesses to make available. Derived from the tracked layout when zero.
+    /// @return This command buffer.
+    CommandBuffer& acquire_image(Image& image,
+                                 uint32_t producer_queue_family,
+                                 uint32_t consumer_queue_family,
+                                 vk::PipelineStageFlags2 dst_stage = {},
+                                 vk::AccessFlags2 dst_access = {});
 
     /// @brief Copies data between buffers.
     /// @param src Source buffer.
