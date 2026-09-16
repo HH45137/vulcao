@@ -14,19 +14,13 @@
 #include "vulcao/command_buffer.h"
 #include "vulcao/command_pool.h"
 #include "vulcao/fence.h"
+#include "vulcao/log.h"
 #include "vulcao/semaphore.h"
 
 namespace vulcao {
 
 class Buffer;
 class Image;
-
-/// @brief Severity of a message sent to the log callback.
-enum class LogLevel {
-    info,
-    warning,
-    error,
-};
 
 /// @brief Device features that can be requested when creating the device.
 struct DeviceFeatures {
@@ -59,7 +53,6 @@ struct ContextInfo {
     bool separate_compute_queue = false;
     bool separate_transfer_queue = false;
     std::function<void(vkb::PhysicalDeviceSelector&)> customize_selector;
-    std::function<void(LogLevel, std::string_view)> log;
 };
 
 /// @brief Information about a physical device.

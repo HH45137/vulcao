@@ -21,6 +21,39 @@ const char* device_type_name(VkPhysicalDeviceType type) {
     }
 }
 
+LogLevel level_for_severity(VkDebugUtilsMessageSeverityFlagBitsEXT severity) {
+    switch (severity) {
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT: return LogLevel::trace;
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT: return LogLevel::debug;
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT: return LogLevel::warning;
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT: return LogLevel::error;
+        default: return LogLevel::debug;
+    }
+}
+
+LogCategory category_for_type(VkDebugUtilsMessageTypeFlagsEXT type) {
+    if (type & VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT)
+        return LogCategory::validation;
+    if (type & VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT)
+        return LogCategory::performance;
+    return LogCategory::general;
+}
+
+VKAPI_ATTR VkBool32 VKAPI_CALL validation_callback(
+    VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+    VkDebugUtilsMessageTypeFlagsEXT type,
+    const VkDebugUtilsMessengerCallbackDataEXT* data,
+    void* /*user_data*/) {
+    try {
+        vulcao::log(level_for_severity(severity), category_for_type(type),
+                    data != nullptr && data->pMessage != nullptr ? data->pMessage : "",
+                    data != nullptr && data->pMessageIdName != nullptr ? data->pMessageIdName : "");
+    } catch (...) {
+        // Never let an exception cross the Vulkan callback boundary.
+    }
+    return VK_FALSE;
+}
+
 }
 
 Context::Context(const ContextInfo& info) : info_(info) {
@@ -28,8 +61,7 @@ Context::Context(const ContextInfo& info) : info_(info) {
 }
 
 void Context::log(LogLevel level, std::string_view message) const {
-    if (info_.log)
-        info_.log(level, message);
+    vulcao::log(level, LogCategory::general, message);
 }
 
 Context::~Context() {
@@ -99,8 +131,17 @@ void Context::create_instance(const ContextInfo& info) {
         .require_api_version(VK_VERSION_MAJOR(info.api_version), VK_VERSION_MINOR(info.api_version),
                              VK_VERSION_PATCH(info.api_version));
 
-    if (info.validation)
-        builder.request_validation_layers().use_default_debug_messenger();
+    if (info.validation) {
+        builder.request_validation_layers()
+            .set_debug_callback(&validation_callback)
+            .set_debug_messenger_severity(VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+                                          VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT |
+                                          VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                                          VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
+            .set_debug_messenger_type(VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                                      VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                                      VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT);
+    }
 
     for (const char* extension : info.extensions)
         builder.enable_extension(extension);

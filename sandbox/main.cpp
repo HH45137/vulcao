@@ -24,6 +24,7 @@
 #include "vulcao/descriptor_set.h"
 #include "vulcao/frame_manager.h"
 #include "vulcao/image.h"
+#include "vulcao/log.h"
 #include "vulcao/pipeline.h"
 #include "vulcao/pipeline_cache.h"
 #include "vulcao/pipeline_layout.h"
@@ -344,6 +345,17 @@ bool render_frame(vulcao::Context& ctx,
 }
 
 int main(int argc, char** argv) {
+    vulcao::set_log_callback([](const vulcao::LogMessage& message) {
+        if (message.category == vulcao::LogCategory::general &&
+            message.level < vulcao::LogLevel::info)
+            return;
+        std::cout << '[' << vulcao::to_string(message.level) << ": "
+                  << vulcao::to_string(message.category) << ']';
+        if (!message.message_id.empty())
+            std::cout << ' ' << message.message_id << " -";
+        std::cout << ' ' << message.message << std::endl;
+    });
+
     const bool headless = argc > 1 && std::string_view(argv[1]) == "--headless";
     if (headless) {
         try {
@@ -351,10 +363,7 @@ int main(int argc, char** argv) {
                                  .headless = true,
                                  .device_features = {.timeline_semaphore = true},
                                  .separate_compute_queue = true,
-                                 .separate_transfer_queue = true,
-                                 .log = [](vulcao::LogLevel, std::string_view message) {
-                                     std::cout << message << std::endl;
-                                 }}};
+                                 .separate_transfer_queue = true}};
             ctx.initialize();
             run_compute_test(ctx);
         } catch (const std::exception& e) {
@@ -381,10 +390,7 @@ int main(int argc, char** argv) {
         vulcao::Context ctx{{.app_name = "vulcao-game",
                              .device_features = {.timeline_semaphore = true},
                              .separate_compute_queue = true,
-                             .separate_transfer_queue = true,
-                             .log = [](vulcao::LogLevel, std::string_view message) {
-                                 std::cout << message << std::endl;
-                             }}};
+                             .separate_transfer_queue = true}};
         ctx.initialize(create_surface(ctx.instance(), window), framebuffer_extent(window),
                        vulcao::SwapchainInfo{
                            .extra_usage = vk::ImageUsageFlagBits::eTransferSrc});
