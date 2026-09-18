@@ -57,10 +57,14 @@ Run the tests with `ctest --test-dir build`.
 - `01_hello_triangle`: a CPU-side vertex and index buffer drawn through a full
   graphics pipeline.
 - `02_uniforms`: the triangle spun by a uniform buffer and descriptor set.
+- `03_compute`: a storage buffer transformed by a compute shader, with the result
+  verified on the CPU. Needs no display, and exits non-zero on a wrong result or
+  on a validation error.
 
 ```sh
 ./build/samples/01_hello_triangle/hello_triangle
 ./build/samples/02_uniforms/uniforms
+./build/samples/03_compute/compute
 ```
 
 ## Documentation

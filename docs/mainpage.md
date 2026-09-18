@@ -48,6 +48,8 @@ The `samples/` directory contains small, focused programs:
 - `01_hello_triangle`: a CPU-side vertex and index buffer drawn through a full
   graphics pipeline.
 - `02_uniforms`: the triangle spun by a uniform buffer and descriptor set.
+- `03_compute`: a storage buffer transformed by a compute shader, with the result
+  verified on the CPU. Headless, so it needs no display.
 
 ## Where to start
 

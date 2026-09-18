@@ -4,3 +4,4 @@ add_subdirectory(common)
 
 add_subdirectory(01_hello_triangle)
 add_subdirectory(02_uniforms)
+add_subdirectory(03_compute)
