@@ -63,6 +63,18 @@ Run the tests with `ctest --test-dir build`.
 ./build/samples/02_uniforms/uniforms
 ```
 
+## Documentation
+
+The API reference is generated with Doxygen from `docs/`:
+
+```sh
+cmake -S . -B build -DVULCAO_BUILD_DOCS=ON
+cmake --build build --target vulcao_docs
+```
+
+The HTML output is written to `docs/generated/html` and is published to GitHub
+Pages and Codeberg Pages by CI.
+
 ## Using from another project
 
 ```sh

@@ -1,0 +1,52 @@
+# Doxygen configuration for vulcao.
+#
+# Run from the repository root:
+#   doxygen docs/Doxyfile
+#
+# Output is written to docs/generated/html.
+
+PROJECT_NAME           = vulcao
+PROJECT_BRIEF          = "A thin, RAII wrapper around Vulkan"
+OUTPUT_DIRECTORY       = docs/generated
+
+# --- input -------------------------------------------------------------------
+
+INPUT                  = include/vulcao docs/mainpage.md
+FILE_PATTERNS          = *.h *.md
+RECURSIVE              = YES
+EXCLUDE                = third_party build
+EXTRACT_ALL            = YES
+WARN_IF_UNDOCUMENTED   = YES
+WARN_AS_ERROR          = NO
+INPUT_ENCODING         = UTF-8
+USE_MDFILE_AS_MAINPAGE = docs/mainpage.md
+
+# --- output ------------------------------------------------------------------
+
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+GENERATE_TREEVIEW      = YES
+DISABLE_INDEX          = NO
+FULL_SIDEBAR           = NO
+HTML_OUTPUT            = html
+HTML_COLORSTYLE        = LIGHT
+HTML_HEADER            = docs/header.html
+HTML_COPY_CLIPBOARD    = NO
+PAGE_OUTLINE_PANEL     = NO
+
+HTML_EXTRA_STYLESHEET  = third_party/doxygen-awesome-css/doxygen-awesome.css \
+                         third_party/doxygen-awesome-css/doxygen-awesome-sidebar-only.css \
+                         third_party/doxygen-awesome-css/doxygen-awesome-sidebar-only-darkmode-toggle.css
+
+HTML_EXTRA_FILES       = third_party/doxygen-awesome-css/doxygen-awesome-darkmode-toggle.js \
+                         third_party/doxygen-awesome-css/doxygen-awesome-fragment-copy-button.js \
+                         third_party/doxygen-awesome-css/doxygen-awesome-paragraph-link.js \
+                         third_party/doxygen-awesome-css/doxygen-awesome-interactive-toc.js \
+                         third_party/doxygen-awesome-css/doxygen-awesome-tabs.js
+
+# --- graphs ------------------------------------------------------------------
+
+HAVE_DOT               = YES
+CALL_GRAPH             = NO
+CALLER_GRAPH           = NO
+DOT_IMAGE_FORMAT       = svg

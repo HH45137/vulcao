@@ -16,3 +16,6 @@
 [submodule "third_party/doctest"]
 	path = third_party/doctest
 	url = https://github.com/doctest/doctest
+[submodule "third_party/doxygen-awesome-css"]
+	path = third_party/doxygen-awesome-css
+	url = https://github.com/jothepro/doxygen-awesome-css.git

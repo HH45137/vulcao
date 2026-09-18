@@ -7,6 +7,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(VULCAO_BUILD_SAMPLES "Build vulcao samples" ON)
 option(VULCAO_BUILD_TESTS "Build vulcao tests" ${PROJECT_IS_TOP_LEVEL})
+option(VULCAO_BUILD_DOCS "Build API documentation with Doxygen" OFF)
 option(VULCAO_INSTALL "Generate vulcao install rules" ${PROJECT_IS_TOP_LEVEL})
 
 set(VULCAO_THIRD_PARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
@@ -148,4 +149,16 @@ if(VULCAO_BUILD_TESTS)
     add_subdirectory(third_party/doctest)
 
     add_subdirectory(tests)
+endif()
+
+# --- documentation -----------------------------------------------------------
+
+if(VULCAO_BUILD_DOCS)
+    find_package(Doxygen REQUIRED)
+
+    add_custom_target(vulcao_docs
+        COMMAND ${DOXYGEN_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/docs/Doxyfile
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Generating API documentation with Doxygen"
+        VERBATIM)
 endif()
