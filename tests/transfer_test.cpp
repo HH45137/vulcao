@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <cstdint>
+#include <ostream>
 #include <stdexcept>
 #include <string>
 #include <vector>

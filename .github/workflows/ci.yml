@@ -25,9 +25,16 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers
 
-      - name: Check lavapipe ICD
+      - name: Configure lavapipe
         if: runner.os == 'Linux'
-        run: test -f /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+        run: |
+          ls -la /usr/share/vulkan/icd.d/
+          icd="$(ls /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -n 1)"
+          if [ -z "$icd" ]; then
+            echo "lavapipe ICD not found" >&2
+            exit 1
+          fi
+          echo "VK_ICD_FILENAMES=$icd" >> "$GITHUB_ENV"
 
       - name: Install Vulkan SDK (Windows)
         if: runner.os == 'Windows'
@@ -48,6 +55,4 @@ jobs:
 
       - name: Test (lavapipe, validation)
         if: runner.os == 'Linux'
-        env:
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
         run: ctest --test-dir build --output-on-failure -C Release

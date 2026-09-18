@@ -2,11 +2,8 @@ name: ci
 
 # Forgejo Actions (Codeberg). Mirrors .github/workflows/ci.yml, but:
 # - Windows is not covered here.
-# - The Vulkan SDK is installed from apt instead of jurplel/install-vulkan-sdk,
-#   which is not mirrored on code.forgejo.org. Samples are disabled, so no
-#   shader compiler is needed; only the loader and headers.
-# - Tests run against lavapipe (software Vulkan) so the device paths execute
-#   and the validation layers are exercised.
+# - The Vulkan loader, validation layers and lavapipe are installed from apt.
+#   Samples are disabled, so no shader compiler is needed.
 # - Adjust runs-on to match your runner's label (e.g. "docker" or a custom one).
 
 on:
@@ -29,8 +26,15 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             cmake build-essential libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers
 
-      - name: Check lavapipe ICD
-        run: test -f /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+      - name: Configure lavapipe
+        run: |
+          ls -la /usr/share/vulkan/icd.d/
+          icd="$(ls /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -n 1)"
+          if [ -z "$icd" ]; then
+            echo "lavapipe ICD not found" >&2
+            exit 1
+          fi
+          echo "VK_ICD_FILENAMES=$icd" >> "$GITHUB_ENV"
 
       - name: Configure
         run: cmake -S . -B build -DVULCAO_BUILD_SAMPLES=OFF -DVULCAO_BUILD_TESTS=ON
@@ -39,6 +43,4 @@ jobs:
         run: cmake --build build --config Release
 
       - name: Test (lavapipe, validation)
-        env:
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
         run: ctest --test-dir build --output-on-failure -C Release
