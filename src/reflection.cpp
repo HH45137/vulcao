@@ -182,13 +182,24 @@ PipelineReflection merge_reflections(std::span<const ShaderReflection> reflectio
         }
 
         for (const vk::PushConstantRange& range : reflection.push_constants) {
-            auto range_it = std::find_if(
-                merged.push_constants.begin(), merged.push_constants.end(),
-                [&](const vk::PushConstantRange& r) { return r.offset == range.offset && r.size == range.size; });
-            if (range_it == merged.push_constants.end())
-                merged.push_constants.push_back(range);
-            else
-                range_it->stageFlags |= range.stageFlags;
+            // Stages may declare the same push constant block with different
+            // ranges (e.g. the vertex stage reads the first 64 bytes, the
+            // fragment stage all 128). Overlapping ranges are illegal in a
+            // pipeline layout, so fold them into the union with OR'd stages.
+            vk::PushConstantRange incoming = range;
+            for (auto it = merged.push_constants.begin(); it != merged.push_constants.end();) {
+                const uint32_t existing_end = it->offset + it->size;
+                const uint32_t incoming_end = incoming.offset + incoming.size;
+                if (it->offset < incoming_end && incoming.offset < existing_end) {
+                    incoming.offset = std::min(it->offset, incoming.offset);
+                    incoming.size = std::max(existing_end, incoming_end) - incoming.offset;
+                    incoming.stageFlags |= it->stageFlags;
+                    it = merged.push_constants.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            merged.push_constants.push_back(incoming);
         }
     }
 
@@ -199,8 +210,25 @@ PipelineReflection merge_reflections(std::span<const ShaderReflection> reflectio
                   [](const vk::DescriptorSetLayoutBinding& a, const vk::DescriptorSetLayoutBinding& b) {
                       return a.binding < b.binding;
                   });
+    std::sort(merged.push_constants.begin(), merged.push_constants.end(),
+              [](const vk::PushConstantRange& a, const vk::PushConstantRange& b) {
+                  return a.offset < b.offset;
+              });
 
     return merged;
+}
+
+bool set_binding_count(DescriptorSetLayoutInfo& set, uint32_t binding, uint32_t count) {
+    if (count == 0)
+        throw std::runtime_error("set_binding_count: count must be non-zero");
+
+    for (vk::DescriptorSetLayoutBinding& b : set.bindings) {
+        if (b.binding == binding) {
+            b.descriptorCount = count;
+            return true;
+        }
+    }
+    return false;
 }
 
 }

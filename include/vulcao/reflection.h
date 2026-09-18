@@ -51,4 +51,17 @@ ShaderReflection reflect_spirv(std::span<const uint32_t> spirv);
 /// @return Merged descriptor sets and push constant ranges.
 PipelineReflection merge_reflections(std::span<const ShaderReflection> reflections);
 
+/// @brief Sets the descriptor count of one binding in a reflected set.
+///
+/// Reflected runtime arrays (unsized descriptor arrays, the building block of
+/// bindless) report descriptorCount 0, which vk::DescriptorSetLayoutCreateInfo
+/// rejects. Use this to give such a binding a concrete upper bound before
+/// creating a layout, typically together with the ePartiallyBound or
+/// eVariableDescriptorCount binding flags.
+/// @param set Reflected set to modify.
+/// @param binding Binding number to change.
+/// @param count New descriptor count, must be non-zero.
+/// @return True if the binding exists in the set.
+bool set_binding_count(DescriptorSetLayoutInfo& set, uint32_t binding, uint32_t count);
+
 }

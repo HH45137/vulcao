@@ -73,6 +73,85 @@ TEST_CASE("merge_reflections keeps distinct bindings and ranges") {
     CHECK(merged.push_constants.size() == 2);
 }
 
+TEST_CASE("merge_reflections folds overlapping push constant ranges into their union") {
+    // The vertex stage reads the first 64 bytes, the fragment stage a window
+    // that overlaps it: overlapping ranges are illegal in a pipeline layout.
+    const std::array<vulcao::ShaderReflection, 2> stages{
+        make_stage(vk::ShaderStageFlagBits::eVertex, 0, 0, 64),
+        make_stage(vk::ShaderStageFlagBits::eFragment, 1, 32, 128),
+    };
+
+    const vulcao::PipelineReflection merged = vulcao::merge_reflections(stages);
+
+    REQUIRE(merged.push_constants.size() == 1);
+    CHECK(merged.push_constants.front().offset == 0);
+    CHECK(merged.push_constants.front().size == 160);
+    CHECK(merged.push_constants.front().stageFlags ==
+          (vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment));
+}
+
+TEST_CASE("merge_reflections folds chains of overlapping push constant ranges") {
+    // [0,100) + [90,150) + [140,300) overlap transitively and must collapse
+    // into a single [0,300) range.
+    const std::array<vulcao::ShaderReflection, 3> stages{
+        make_stage(vk::ShaderStageFlagBits::eVertex, 0, 0, 100),
+        make_stage(vk::ShaderStageFlagBits::eFragment, 1, 90, 60),
+        make_stage(vk::ShaderStageFlagBits::eCompute, 2, 140, 160),
+    };
+
+    const vulcao::PipelineReflection merged = vulcao::merge_reflections(stages);
+
+    REQUIRE(merged.push_constants.size() == 1);
+    CHECK(merged.push_constants.front().offset == 0);
+    CHECK(merged.push_constants.front().size == 300);
+    CHECK(merged.push_constants.front().stageFlags ==
+          (vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment |
+           vk::ShaderStageFlagBits::eCompute));
+}
+
+TEST_CASE("merge_reflections keeps adjacent push constant ranges separate") {
+    // [0,64) and [64,16) touch but do not overlap; both are legal and stay.
+    const std::array<vulcao::ShaderReflection, 2> stages{
+        make_stage(vk::ShaderStageFlagBits::eVertex, 0, 64, 16),
+        make_stage(vk::ShaderStageFlagBits::eFragment, 1, 0, 64),
+    };
+
+    const vulcao::PipelineReflection merged = vulcao::merge_reflections(stages);
+
+    // Sorted by offset.
+    REQUIRE(merged.push_constants.size() == 2);
+    CHECK(merged.push_constants[0].offset == 0);
+    CHECK(merged.push_constants[0].size == 64);
+    CHECK(merged.push_constants[1].offset == 64);
+    CHECK(merged.push_constants[1].size == 16);
+}
+
+TEST_CASE("set_binding_count gives a reflected runtime array a concrete bound") {
+    // Runtime arrays reflect with descriptorCount 0, which no layout accepts.
+    vulcao::DescriptorSetLayoutInfo set{
+        .set = 0,
+        .bindings = {vk::DescriptorSetLayoutBinding{
+                         .binding = 0,
+                         .descriptorType = vk::DescriptorType::eSampledImage,
+                         .descriptorCount = 0,
+                         .stageFlags = vk::ShaderStageFlagBits::eFragment,
+                     },
+                     vk::DescriptorSetLayoutBinding{
+                         .binding = 3,
+                         .descriptorType = vk::DescriptorType::eUniformBuffer,
+                         .descriptorCount = 1,
+                         .stageFlags = vk::ShaderStageFlagBits::eFragment,
+                     }},
+    };
+
+    CHECK(vulcao::set_binding_count(set, 0, 1024));
+    CHECK(set.bindings[0].descriptorCount == 1024);
+    CHECK(set.bindings[1].descriptorCount == 1);
+
+    CHECK_FALSE(vulcao::set_binding_count(set, 7, 4));
+    CHECK_THROWS_AS(vulcao::set_binding_count(set, 0, 0), std::runtime_error);
+}
+
 TEST_CASE("merge_reflections sorts sets and bindings") {
     vulcao::ShaderReflection reflection;
     reflection.stage = vk::ShaderStageFlagBits::eFragment;
