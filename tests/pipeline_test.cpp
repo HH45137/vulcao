@@ -1,0 +1,345 @@
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <span>
+#include <stdexcept>
+#include <vector>
+
+#include <doctest/doctest.h>
+
+#include <vulcao/context.h>
+#include <vulcao/descriptor_set.h>
+#include <vulcao/log.h>
+#include <vulcao/pipeline.h>
+#include <vulcao/pipeline_cache.h>
+#include <vulcao/pipeline_layout.h>
+#include <vulcao/shader_module.h>
+#include <vulcao/vertex_layout.h>
+
+#include "common.h"
+
+#ifdef VULCAO_HAVE_TEST_SHADERS
+
+namespace {
+
+struct Vertex {
+    float position[3];
+    float color[3];
+};
+
+/// Reads a SPIR-V file into words, returning an empty vector when it cannot be read.
+std::vector<uint32_t> read_spirv(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file)
+        return {};
+
+    const std::streamsize size = file.tellg();
+    if (size <= 0 || size % 4 != 0)
+        return {};
+
+    std::vector<uint32_t> words(static_cast<size_t>(size) / sizeof(uint32_t));
+    file.seekg(0);
+    if (!file.read(reinterpret_cast<char*>(words.data()), size))
+        return {};
+    return words;
+}
+
+const vk::DescriptorSetLayoutBinding* find_binding(const vulcao::ShaderReflection& reflection,
+                                                   uint32_t set,
+                                                   uint32_t binding) {
+    for (const vk::DescriptorSetLayoutBinding& candidate : reflection.bindings_for_set(set))
+        if (candidate.binding == binding)
+            return &candidate;
+    return nullptr;
+}
+
+}
+
+TEST_CASE("shader reflection reports what each stage uses") {
+    VULCAO_REQUIRE_DEVICE();
+
+    const vulcao::test::LogLevelGuard log_level_guard;
+    vulcao::set_log_level(vulcao::LogLevel::warning);
+
+    vulcao::test::ErrorCapture capture;
+
+    vulcao::ContextInfo info;
+    info.headless = true;
+    info.validation = true;
+
+    vulcao::Context context{info};
+    context.initialize();
+
+    const std::filesystem::path dir = vulcao::test::shader_dir();
+    const vulcao::ShaderModule vertex = vulcao::ShaderModule::create_from_file(
+        context.device(), vk::ShaderStageFlagBits::eVertex, dir / "reflection.vert.spv");
+    const vulcao::ShaderModule fragment = vulcao::ShaderModule::create_from_file(
+        context.device(), vk::ShaderStageFlagBits::eFragment, dir / "reflection.frag.spv");
+    const vulcao::ShaderModule compute = vulcao::ShaderModule::create_from_file(
+        context.device(), vk::ShaderStageFlagBits::eCompute, dir / "reflection.comp.spv");
+
+    REQUIRE(vertex.valid());
+    REQUIRE(fragment.valid());
+    REQUIRE(compute.valid());
+    CHECK(vertex.stage() == vk::ShaderStageFlagBits::eVertex);
+
+    // The vertex stage reads one uniform buffer and two vertex inputs.
+    const vulcao::ShaderReflection& vertex_reflection = vertex.reflection();
+    CHECK(vertex_reflection.stage == vk::ShaderStageFlagBits::eVertex);
+    CHECK(vertex_reflection.bindings_for_set(0).size() == 1);
+    const vk::DescriptorSetLayoutBinding* vertex_uniform =
+        find_binding(vertex_reflection, 0, 0);
+    REQUIRE(vertex_uniform != nullptr);
+    CHECK(vertex_uniform->descriptorType == vk::DescriptorType::eUniformBuffer);
+    CHECK(vertex_uniform->stageFlags == vk::ShaderStageFlagBits::eVertex);
+    CHECK(vertex_reflection.push_constants.empty());
+
+    REQUIRE(vertex_reflection.vertex_attributes.size() == 2);
+    const auto& attributes = vertex_reflection.vertex_attributes;
+    CHECK(attributes[0].location == 0);
+    CHECK(attributes[0].format == vk::Format::eR32G32B32Sfloat);
+    CHECK(attributes[1].location == 1);
+    CHECK(attributes[1].format == vk::Format::eR32G32B32Sfloat);
+
+    // The fragment stage uses no descriptors at all, only push constants.
+    const vulcao::ShaderReflection& fragment_reflection = fragment.reflection();
+    CHECK(fragment_reflection.stage == vk::ShaderStageFlagBits::eFragment);
+    CHECK(fragment_reflection.sets.empty());
+    REQUIRE(fragment_reflection.push_constants.size() == 1);
+    CHECK(fragment_reflection.push_constants.front().offset == 0);
+    CHECK(fragment_reflection.push_constants.front().stageFlags == vk::ShaderStageFlagBits::eFragment);
+    // float4 tint plus a uint, so at least 20 bytes and far below the guaranteed minimum.
+    CHECK(fragment_reflection.push_constants.front().size >= 20);
+    CHECK(fragment_reflection.push_constants.front().size <= 128);
+
+    // The compute stage reads a uniform buffer and a storage buffer.
+    const vulcao::ShaderReflection& compute_reflection = compute.reflection();
+    CHECK(compute_reflection.stage == vk::ShaderStageFlagBits::eCompute);
+    REQUIRE(compute_reflection.sets.size() == 1);
+    CHECK(compute_reflection.sets.front().set == 0);
+    CHECK(compute_reflection.bindings_for_set(0).size() == 2);
+
+    const vk::DescriptorSetLayoutBinding* compute_uniform = find_binding(compute_reflection, 0, 0);
+    const vk::DescriptorSetLayoutBinding* compute_storage = find_binding(compute_reflection, 0, 1);
+    REQUIRE(compute_uniform != nullptr);
+    REQUIRE(compute_storage != nullptr);
+    CHECK(compute_uniform->descriptorType == vk::DescriptorType::eUniformBuffer);
+    CHECK(compute_storage->descriptorType == vk::DescriptorType::eStorageBuffer);
+    CHECK(compute_storage->stageFlags == vk::ShaderStageFlagBits::eCompute);
+    REQUIRE(compute_reflection.push_constants.size() == 1);
+    CHECK(compute_reflection.push_constants.front().offset == 0);
+
+    CHECK(capture.errors.empty());
+}
+
+TEST_CASE("shader module builds from memory and rejects bad input") {
+    VULCAO_REQUIRE_DEVICE();
+
+    const vulcao::test::LogLevelGuard log_level_guard;
+    vulcao::set_log_level(vulcao::LogLevel::warning);
+
+    vulcao::ContextInfo info;
+    info.headless = true;
+    info.validation = true;
+
+    vulcao::Context context{info};
+    context.initialize();
+
+    const std::filesystem::path path = vulcao::test::shader_dir() / "reflection.comp.spv";
+    const std::vector<uint32_t> spirv = read_spirv(path);
+    REQUIRE(!spirv.empty());
+
+    const vulcao::ShaderModule from_memory = vulcao::ShaderModule::create(
+        context.device(), vk::ShaderStageFlagBits::eCompute, spirv);
+    const vulcao::ShaderModule from_file = vulcao::ShaderModule::create_from_file(
+        context.device(), vk::ShaderStageFlagBits::eCompute, path);
+
+    REQUIRE(from_memory.valid());
+    REQUIRE(from_file.valid());
+    CHECK(from_memory.reflection().sets.size() == from_file.reflection().sets.size());
+    CHECK(from_memory.reflection().push_constants.size() ==
+          from_file.reflection().push_constants.size());
+
+    CHECK_THROWS_AS(
+        vulcao::ShaderModule::create(context.device(), vk::ShaderStageFlagBits::eCompute,
+                                     std::span<const uint32_t>{}),
+        std::runtime_error);
+    CHECK_THROWS_AS(vulcao::ShaderModule::create_from_file(
+                        context.device(), vk::ShaderStageFlagBits::eCompute,
+                        std::filesystem::path{"vulcao_no_such_shader.spv"}),
+                    std::runtime_error);
+}
+
+TEST_CASE("pipeline layout merges reflections and tracks owned set layouts") {
+    VULCAO_REQUIRE_DEVICE();
+
+    const vulcao::test::LogLevelGuard log_level_guard;
+    vulcao::set_log_level(vulcao::LogLevel::warning);
+
+    vulcao::ContextInfo info;
+    info.headless = true;
+    info.validation = true;
+
+    vulcao::Context context{info};
+    context.initialize();
+
+    const std::filesystem::path dir = vulcao::test::shader_dir();
+    const vulcao::ShaderModule vertex = vulcao::ShaderModule::create_from_file(
+        context.device(), vk::ShaderStageFlagBits::eVertex, dir / "reflection.vert.spv");
+    const vulcao::ShaderModule fragment = vulcao::ShaderModule::create_from_file(
+        context.device(), vk::ShaderStageFlagBits::eFragment, dir / "reflection.frag.spv");
+    REQUIRE(vertex.valid());
+    REQUIRE(fragment.valid());
+
+    const std::array<vulcao::ShaderReflection, 2> reflections{vertex.reflection(),
+                                                              fragment.reflection()};
+
+    // Owning variant: the layout keeps the descriptor set layouts alive.
+    const vulcao::PipelineLayout owning =
+        vulcao::PipelineLayout::create_from_reflection(context.device(), reflections);
+    CHECK(owning.valid());
+    CHECK(owning.set_count() == 1);
+    CHECK(owning.set_layout(0) != VK_NULL_HANDLE);
+    CHECK(owning.set_layouts().size() == 1);
+
+    // Cached variant: the cache owns the set layouts, so the layout owns none.
+    vulcao::DescriptorSetLayoutCache cache{context.device()};
+    const vulcao::PipelineLayout cached =
+        vulcao::PipelineLayout::create_from_reflection(context.device(), cache, reflections);
+    CHECK(cached.valid());
+    CHECK(cached.set_count() == 1);
+    CHECK(cached.set_layouts().empty());
+
+    // Manual variant from raw handles.
+    const std::array<vk::DescriptorSetLayout, 1> raw_layouts{owning.set_layout(0)};
+    const std::array<vk::PushConstantRange, 1> ranges{vk::PushConstantRange{
+        .stageFlags = vk::ShaderStageFlagBits::eFragment, .offset = 0, .size = 20}};
+    const vulcao::PipelineLayout manual =
+        vulcao::PipelineLayout::create(context.device(), raw_layouts, ranges);
+    CHECK(manual.valid());
+    CHECK(manual.set_count() == 1);
+    CHECK(manual.set_layouts().empty());
+
+    CHECK_THROWS_AS(owning.set_layout(4), std::out_of_range);
+}
+
+TEST_CASE("compute pipelines build from reflected layouts, with and without a cache") {
+    VULCAO_REQUIRE_DEVICE();
+
+    const vulcao::test::LogLevelGuard log_level_guard;
+    vulcao::set_log_level(vulcao::LogLevel::warning);
+
+    vulcao::test::ErrorCapture capture;
+
+    vulcao::ContextInfo info;
+    info.headless = true;
+    info.validation = true;
+
+    vulcao::Context context{info};
+    context.initialize();
+
+    const vulcao::ShaderModule compute = vulcao::ShaderModule::create_from_file(
+        context.device(), vk::ShaderStageFlagBits::eCompute,
+        vulcao::test::shader_dir() / "reflection.comp.spv");
+    REQUIRE(compute.valid());
+
+    const vulcao::PipelineLayout layout = vulcao::PipelineLayout::create_from_reflection(
+        context.device(), std::span(&compute.reflection(), 1));
+    REQUIRE(layout.valid());
+
+    const vulcao::Pipeline pipeline =
+        vulcao::Pipeline::create_compute(context.device(), layout, compute, "computeMain");
+    CHECK(pipeline.valid());
+    CHECK(pipeline.bind_point() == vk::PipelineBindPoint::eCompute);
+
+    vulcao::PipelineCache cache = vulcao::PipelineCache::create(context.device());
+    REQUIRE(cache.valid());
+    const vulcao::Pipeline cached = vulcao::Pipeline::create_compute(
+        context.device(), cache, layout, compute, "computeMain");
+    CHECK(cached.valid());
+
+    // The serialized cache round trips into a new cache object.
+    const std::vector<uint8_t> blob = cache.data();
+    CHECK_NOTHROW(vulcao::PipelineCache::create(context.device(), blob.data(), blob.size()));
+
+    CHECK_THROWS_AS(
+        vulcao::Pipeline::create_compute(context.device(), vulcao::PipelineLayout{}, compute,
+                                         "computeMain"),
+        std::runtime_error);
+
+    CHECK(capture.errors.empty());
+}
+
+TEST_CASE("graphics pipelines build from a reflected vertex layout") {
+    VULCAO_REQUIRE_DEVICE();
+
+    const vulcao::test::LogLevelGuard log_level_guard;
+    vulcao::set_log_level(vulcao::LogLevel::warning);
+
+    vulcao::test::ErrorCapture capture;
+
+    vulcao::ContextInfo info;
+    info.headless = true;
+    info.validation = true;
+
+    vulcao::Context context{info};
+    context.initialize();
+
+    const std::filesystem::path dir = vulcao::test::shader_dir();
+    const vulcao::ShaderModule vertex = vulcao::ShaderModule::create_from_file(
+        context.device(), vk::ShaderStageFlagBits::eVertex, dir / "reflection.vert.spv");
+    const vulcao::ShaderModule fragment = vulcao::ShaderModule::create_from_file(
+        context.device(), vk::ShaderStageFlagBits::eFragment, dir / "reflection.frag.spv");
+    REQUIRE(vertex.valid());
+    REQUIRE(fragment.valid());
+
+    const vulcao::VertexLayout vertex_layout = vulcao::make_vertex_layout<Vertex>(
+        vertex.reflection(), {offsetof(Vertex, position), offsetof(Vertex, color)});
+    REQUIRE(vertex_layout.attributes.size() == 2);
+    CHECK(vertex_layout.bindings.size() == 1);
+    CHECK(vertex_layout.bindings.front().stride == sizeof(Vertex));
+    CHECK(vertex_layout.bindings.front().inputRate == vk::VertexInputRate::eVertex);
+    CHECK(vertex_layout.attributes[0].offset == offsetof(Vertex, position));
+    CHECK(vertex_layout.attributes[1].offset == offsetof(Vertex, color));
+
+    const std::array<vulcao::ShaderReflection, 2> reflections{vertex.reflection(),
+                                                              fragment.reflection()};
+    const vulcao::PipelineLayout layout =
+        vulcao::PipelineLayout::create_from_reflection(context.device(), reflections);
+    REQUIRE(layout.valid());
+
+    const vulcao::GraphicsPipelineInfo pipeline_info{
+        .vertex_shader = vertex.handle(),
+        .fragment_shader = fragment.handle(),
+        .vertex_entry = "vertMain",
+        .fragment_entry = "fragMain",
+        .vertex_bindings = vertex_layout.bindings,
+        .vertex_attributes = vertex_layout.attributes,
+        .color_formats = {vk::Format::eB8G8R8A8Unorm},
+    };
+
+    const vulcao::Pipeline pipeline =
+        vulcao::Pipeline::create_graphics(context.device(), layout, pipeline_info);
+    CHECK(pipeline.valid());
+    CHECK(pipeline.bind_point() == vk::PipelineBindPoint::eGraphics);
+
+    // Documented preconditions of create_graphics.
+    CHECK_THROWS_AS(
+        vulcao::Pipeline::create_graphics(context.device(), vulcao::PipelineLayout{}, pipeline_info),
+        std::runtime_error);
+
+    vulcao::GraphicsPipelineInfo missing_fragment = pipeline_info;
+    missing_fragment.fragment_shader = vk::ShaderModule{};
+    CHECK_THROWS_AS(
+        vulcao::Pipeline::create_graphics(context.device(), layout, missing_fragment),
+        std::runtime_error);
+
+    // make_vertex_layout rejects a member offset list that does not match.
+    CHECK_THROWS_AS(vulcao::make_vertex_layout<Vertex>(vertex.reflection(), {0}), std::runtime_error);
+
+    CHECK(capture.errors.empty());
+}
+
+#endif
