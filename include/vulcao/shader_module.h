@@ -33,6 +33,7 @@ public:
     /// @param stage Shader stage of the entry point.
     /// @param spirv SPIR-V code.
     /// @return The created shader module.
+    /// @throws std::runtime_error if the SPIR-V is empty, cannot be reflected, or module creation fails.
     static ShaderModule create(vk::Device device,
                                vk::ShaderStageFlagBits stage,
                                std::span<const uint32_t> spirv);
@@ -42,6 +43,8 @@ public:
     /// @param stage Shader stage of the entry point.
     /// @param path Path to the SPIR-V file.
     /// @return The created shader module.
+    /// @throws std::runtime_error if the file cannot be read, its size is invalid, or
+    ///         reflection or module creation fails.
     static ShaderModule create_from_file(vk::Device device,
                                          vk::ShaderStageFlagBits stage,
                                          const std::filesystem::path& path);

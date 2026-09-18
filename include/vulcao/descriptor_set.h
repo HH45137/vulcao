@@ -111,11 +111,13 @@ public:
     /// @brief Allocates one descriptor set. The pool must outlive the returned set.
     /// @param layout Layout of the set.
     /// @return The allocated descriptor set.
+    /// @throws std::runtime_error if the layout is invalid or allocation fails.
     DescriptorSet allocate(const DescriptorSetLayout& layout);
 
     /// @brief Allocates one descriptor set from a raw layout handle.
     /// @param layout Layout of the set.
     /// @return The allocated descriptor set.
+    /// @throws std::runtime_error if the layout is invalid or allocation fails.
     DescriptorSet allocate(vk::DescriptorSetLayout layout);
 
     /// @brief Resets the pool and frees all sets allocated from it.

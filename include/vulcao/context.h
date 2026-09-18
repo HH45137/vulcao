@@ -26,21 +26,22 @@ class Image;
 
 /// @brief Device features that can be requested when creating the device.
 struct DeviceFeatures {
-    bool sampler_anisotropy = false;
-    bool timeline_semaphore = false;
-    bool descriptor_indexing = false;
-    bool shader_int64 = false;
-    bool fill_mode_non_solid = false;
-    bool wide_lines = false;
-    bool depth_clamp = false;
-    bool draw_indirect_first_instance = false;
+    bool sampler_anisotropy = false;         ///< Enable anisotropic filtering.
+    bool timeline_semaphore = false;         ///< Enable timeline semaphores.
+    bool descriptor_indexing = false;        ///< Enable the descriptor indexing feature set.
+    bool shader_int64 = false;               ///< Enable 64 bit integers in shaders.
+    bool fill_mode_non_solid = false;        ///< Enable point and wireframe polygon modes.
+    bool wide_lines = false;                 ///< Enable line widths other than 1.
+    bool depth_clamp = false;                ///< Enable depth clamping.
+    bool draw_indirect_first_instance = false; ///< Enable the firstInstance parameter of indirect draws.
 };
 
 /// @brief Creation parameters of a Context.
 struct ContextInfo {
-    std::string app_name = "vulcao";
-    uint32_t app_version = VK_MAKE_VERSION(1, 0, 0);
-    uint32_t api_version = VK_API_VERSION_1_3;
+    std::string app_name = "vulcao";                     ///< Application name reported to the driver.
+    uint32_t app_version = VK_MAKE_VERSION(1, 0, 0);     ///< Application version reported to the driver.
+    uint32_t api_version = VK_API_VERSION_1_3;           ///< Vulkan version to require.
+    /// @brief Enable the validation layers and the debug messenger.
 #ifdef NDEBUG
     bool validation = false;
 #else
@@ -54,40 +55,47 @@ struct ContextInfo {
         vk::DebugUtilsMessageSeverityFlagBitsEXT::eError;
     /// @brief Create the instance without presentation extensions and skip the swapchain.
     bool headless = false;
-    std::vector<const char*> extensions;
-    std::vector<const char*> layers;
-    std::vector<const char*> device_extensions;
-    DeviceFeatures device_features;
-    bool separate_compute_queue = false;
-    bool separate_transfer_queue = false;
-    std::function<void(vkb::PhysicalDeviceSelector&)> customize_selector;
+    std::vector<const char*> extensions;         ///< Additional instance extensions to enable.
+    std::vector<const char*> layers;             ///< Additional instance layers to enable.
+    std::vector<const char*> device_extensions;  ///< Device extensions to require.
+    DeviceFeatures device_features;              ///< Device features to require.
+    bool separate_compute_queue = false;         ///< Require a compute queue family distinct from graphics.
+    bool separate_transfer_queue = false;        ///< Require a transfer queue family distinct from graphics.
+    std::function<void(vkb::PhysicalDeviceSelector&)> customize_selector; ///< Hook to customize device selection.
 };
 
 /// @brief Information about a physical device.
 struct PhysicalDeviceInfo {
-    std::string name;
-    vk::PhysicalDeviceType type = vk::PhysicalDeviceType::eOther;
-    uint32_t vendor_id = 0;
-    uint32_t driver_version = 0;
-    uint32_t api_version = 0;
+    std::string name;                                    ///< Device name.
+    vk::PhysicalDeviceType type = vk::PhysicalDeviceType::eOther; ///< Device type.
+    uint32_t vendor_id = 0;                              ///< Vendor id.
+    uint32_t driver_version = 0;                         ///< Driver version.
+    uint32_t api_version = 0;                            ///< Highest supported Vulkan version.
 };
 
 /// @brief Creation parameters of the swapchain.
 struct SwapchainInfo {
+    /// @brief Surface formats to try, in priority order.
     std::vector<vk::SurfaceFormatKHR> formats{
         vk::SurfaceFormatKHR{.format = vk::Format::eB8G8R8A8Srgb,
                              .colorSpace = vk::ColorSpaceKHR::eSrgbNonlinear}};
+    /// @brief Present modes to try, in priority order.
     std::vector<vk::PresentModeKHR> present_modes{
         vk::PresentModeKHR::eMailbox, vk::PresentModeKHR::eFifo};
+    /// @brief Extra usage flags to request for the swapchain images.
     vk::ImageUsageFlags extra_usage;
+    /// @brief Minimum image count, or 0 to let the implementation decide.
     uint32_t min_image_count = 0;
 };
 
 /// @brief Owns the Vulkan instance, device, swapchain, command pool and VMA allocator.
+/// @note immediate(), upload() and download() share an internal command buffer and
+///       staging buffer and are therefore not thread safe.
 class Context {
 public:
     /// @brief Creates the instance.
     /// @param info Context creation parameters.
+    /// @throws std::runtime_error if the instance cannot be created.
     explicit Context(const ContextInfo& info = {});
 
     /// @brief Destroys all owned Vulkan objects.
@@ -105,15 +113,19 @@ public:
     /// @param surface Presentation surface.
     /// @param extent Initial swapchain extent.
     /// @param swapchain_info Swapchain creation parameters.
+    /// @throws std::runtime_error if already initialized or created headless.
     void initialize(vk::SurfaceKHR surface, vk::Extent2D extent, SwapchainInfo swapchain_info = {});
 
     /// @brief Picks a device and creates the allocator, command pool and queues without a swapchain.
     ///
     /// Requires ContextInfo::headless. No surface is created and present_queue() stays null.
+    /// @throws std::runtime_error if already initialized or ContextInfo::headless is false.
     void initialize();
 
     /// @brief Recreates the swapchain with a new extent.
     /// @param extent New swapchain extent.
+    /// @throws std::runtime_error if the context is not initialized, is headless, or the
+    ///         swapchain cannot be created.
     void recreate_swapchain(vk::Extent2D extent);
 
     /// @brief Waits for the device to become idle.
@@ -183,11 +195,14 @@ public:
     /// @param dst Destination buffer, must have TransferDst usage.
     /// @param data Source pointer.
     /// @param size Number of bytes to upload.
+    /// @throws std::runtime_error if dst is invalid, lacks TransferDst usage or is too small.
     void upload(Buffer& dst, const void* data, vk::DeviceSize size);
 
     /// @brief Uploads a contiguous range to a device local buffer through a staging buffer.
+    /// @tparam Container Contiguous range of trivially copyable values.
     /// @param dst Destination buffer, must have TransferDst usage.
     /// @param data Source range.
+    /// @throws std::runtime_error if dst is invalid, lacks TransferDst usage or is too small.
     template <typename Container>
         requires std::ranges::contiguous_range<Container>
     void upload(Buffer& dst, const Container& data) {
@@ -203,6 +218,7 @@ public:
     /// @param size Number of bytes to upload.
     /// @param final_layout Layout the image is transitioned to after the upload.
     /// @param generate_mips True to generate the mip chain after uploading level 0.
+    /// @throws std::runtime_error if dst is invalid or lacks TransferDst usage.
     void upload(Image& dst,
                 const void* data,
                 vk::DeviceSize size,
@@ -210,10 +226,12 @@ public:
                 bool generate_mips = false);
 
     /// @brief Uploads a contiguous range to an image and transitions it to a final layout.
+    /// @tparam Container Contiguous range of trivially copyable values.
     /// @param dst Destination image, must have TransferDst usage.
     /// @param data Source range.
     /// @param final_layout Layout the image is transitioned to after the upload.
     /// @param generate_mips True to generate the mip chain after uploading level 0.
+    /// @throws std::runtime_error if dst is invalid or lacks TransferDst usage.
     template <typename Container>
         requires std::ranges::contiguous_range<Container>
     void upload(Image& dst,
@@ -232,11 +250,14 @@ public:
     /// @param src Source buffer, must have TransferSrc usage.
     /// @param data Destination pointer.
     /// @param size Number of bytes to read.
+    /// @throws std::runtime_error if src is invalid, lacks TransferSrc usage or is too small.
     void download(const Buffer& src, void* data, vk::DeviceSize size);
 
     /// @brief Reads from a buffer into a contiguous range.
+    /// @tparam Container Contiguous range of trivially copyable values.
     /// @param src Source buffer, must have TransferSrc usage.
     /// @param data Destination range.
+    /// @throws std::runtime_error if src is invalid, lacks TransferSrc usage or is too small.
     template <typename Container>
         requires std::ranges::contiguous_range<Container>
     void download(const Buffer& src, Container& data) {
@@ -251,11 +272,14 @@ public:
     /// @param src Source image, must have TransferSrc usage.
     /// @param data Destination pointer.
     /// @param size Number of bytes to read.
+    /// @throws std::runtime_error if src is invalid or lacks TransferSrc usage.
     void download(Image& src, void* data, vk::DeviceSize size);
 
     /// @brief Reads mip 0, layer 0 of an image into a contiguous range.
+    /// @tparam Container Contiguous range of trivially copyable values.
     /// @param src Source image, must have TransferSrc usage.
     /// @param data Destination range.
+    /// @throws std::runtime_error if src is invalid or lacks TransferSrc usage.
     template <typename Container>
         requires std::ranges::contiguous_range<Container>
     void download(Image& src, Container& data) {

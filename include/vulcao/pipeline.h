@@ -14,40 +14,41 @@ class ShaderModule;
 
 /// @brief Description of a graphics pipeline.
 struct GraphicsPipelineInfo {
-    vk::ShaderModule vertex_shader;
-    vk::ShaderModule fragment_shader;
-    const char* vertex_entry = "main";
-    const char* fragment_entry = "main";
-    const SpecializationInfo* vertex_specialization = nullptr;
-    const SpecializationInfo* fragment_specialization = nullptr;
+    vk::ShaderModule vertex_shader;   ///< Vertex shader module.
+    vk::ShaderModule fragment_shader; ///< Fragment shader module.
+    const char* vertex_entry = "main";   ///< Vertex entry point name.
+    const char* fragment_entry = "main"; ///< Fragment entry point name.
+    const SpecializationInfo* vertex_specialization = nullptr;   ///< Vertex specialization constants.
+    const SpecializationInfo* fragment_specialization = nullptr; ///< Fragment specialization constants.
 
-    vk::PrimitiveTopology topology = vk::PrimitiveTopology::eTriangleList;
-    vk::PolygonMode polygon_mode = vk::PolygonMode::eFill;
-    vk::CullModeFlags cull_mode = {};
-    vk::FrontFace front_face = vk::FrontFace::eCounterClockwise;
+    vk::PrimitiveTopology topology = vk::PrimitiveTopology::eTriangleList; ///< Input assembly topology.
+    vk::PolygonMode polygon_mode = vk::PolygonMode::eFill;                 ///< Polygon rasterization mode.
+    vk::CullModeFlags cull_mode = {};                                      ///< Face culling mode.
+    vk::FrontFace front_face = vk::FrontFace::eCounterClockwise;           ///< Front face winding order.
 
-    bool depth_test = false;
-    bool depth_write = true;
-    vk::CompareOp depth_compare = vk::CompareOp::eLess;
-    bool depth_bias_enable = false;
-    bool depth_bounds_test = false;
-    float min_depth_bounds = 0.0f;
-    float max_depth_bounds = 1.0f;
-    bool stencil_test = false;
-    vk::StencilOpState front_stencil{};
-    vk::StencilOpState back_stencil{};
+    bool depth_test = false;                          ///< Enable depth testing.
+    bool depth_write = true;                          ///< Enable depth writes (when depth testing is on).
+    vk::CompareOp depth_compare = vk::CompareOp::eLess; ///< Depth compare operation.
+    bool depth_bias_enable = false;                   ///< Enable depth bias.
+    bool depth_bounds_test = false;                   ///< Enable the depth bounds test.
+    float min_depth_bounds = 0.0f;                    ///< Lower depth bounds.
+    float max_depth_bounds = 1.0f;                    ///< Upper depth bounds.
+    bool stencil_test = false;                        ///< Enable stencil testing.
+    vk::StencilOpState front_stencil{};               ///< Front face stencil state.
+    vk::StencilOpState back_stencil{};                ///< Back face stencil state.
 
-    bool blend = false;
-    vk::LogicOp logic_op = vk::LogicOp::eCopy;
-    bool logic_op_enable = false;
-    vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1;
+    bool blend = false;                        ///< Enable alpha blending on the color attachments.
+    vk::LogicOp logic_op = vk::LogicOp::eCopy; ///< Logic operation, used when logic_op_enable is true.
+    bool logic_op_enable = false;              ///< Enable the logic operation.
+    vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1; ///< Rasterization sample count.
 
+    /// @brief Dynamic states, enabled on the pipeline and set while recording.
     std::vector<vk::DynamicState> dynamic_states{vk::DynamicState::eViewport,
                                                  vk::DynamicState::eScissor};
-    std::vector<vk::VertexInputBindingDescription> vertex_bindings;
-    std::vector<vk::VertexInputAttributeDescription> vertex_attributes;
-    std::vector<vk::Format> color_formats;
-    vk::Format depth_format = vk::Format::eUndefined;
+    std::vector<vk::VertexInputBindingDescription> vertex_bindings;      ///< Vertex input bindings.
+    std::vector<vk::VertexInputAttributeDescription> vertex_attributes;  ///< Vertex input attributes.
+    std::vector<vk::Format> color_formats;                               ///< Color attachment formats.
+    vk::Format depth_format = vk::Format::eUndefined;                    ///< Depth attachment format.
 };
 
 /// @brief RAII wrapper around a Vulkan pipeline.
@@ -74,6 +75,7 @@ public:
     /// @param layout Pipeline layout.
     /// @param info Pipeline description.
     /// @return The created pipeline.
+    /// @throws std::runtime_error if the layout is invalid, a shader is missing, or creation fails.
     static Pipeline create_graphics(vk::Device device,
                                     const PipelineLayout& layout,
                                     const GraphicsPipelineInfo& info);
@@ -84,6 +86,7 @@ public:
     /// @param layout Pipeline layout.
     /// @param info Pipeline description.
     /// @return The created pipeline.
+    /// @throws std::runtime_error if the layout is invalid, a shader is missing, or creation fails.
     static Pipeline create_graphics(vk::Device device,
                                     const PipelineCache& cache,
                                     const PipelineLayout& layout,
@@ -96,6 +99,7 @@ public:
     /// @param entry Entry point name.
     /// @param specialization Optional specialization constants.
     /// @return The created pipeline.
+    /// @throws std::runtime_error if the layout or shader is invalid, or creation fails.
     static Pipeline create_compute(vk::Device device,
                                    const PipelineLayout& layout,
                                    const ShaderModule& shader,
@@ -110,6 +114,7 @@ public:
     /// @param entry Entry point name.
     /// @param specialization Optional specialization constants.
     /// @return The created pipeline.
+    /// @throws std::runtime_error if the layout or shader is invalid, or creation fails.
     static Pipeline create_compute(vk::Device device,
                                    const PipelineCache& cache,
                                    const PipelineLayout& layout,

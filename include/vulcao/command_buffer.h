@@ -370,6 +370,7 @@ public:
     /// @param size Size of the range in bytes, must be a multiple of 4.
     /// @param data Value written to the range.
     /// @return This command buffer.
+    /// @throws std::runtime_error if size is zero or offset or size is not a multiple of 4.
     CommandBuffer& fill_buffer(vk::Buffer dst, vk::DeviceSize offset, vk::DeviceSize size, uint32_t data);
 
     /// @brief Copies raw bytes into a buffer from host memory.
@@ -378,13 +379,16 @@ public:
     /// @param data Source pointer.
     /// @param size Number of bytes to copy, at most 65536.
     /// @return This command buffer.
+    /// @throws std::runtime_error if size is not a non-zero multiple of 4 or exceeds 65536.
     CommandBuffer& update_buffer(vk::Buffer dst, vk::DeviceSize offset, const void* data, vk::DeviceSize size);
 
     /// @brief Copies a contiguous range into a buffer from host memory.
+    /// @tparam Container Contiguous range of trivially copyable values.
     /// @param dst Destination buffer.
     /// @param offset Byte offset in the destination.
     /// @param data Source range, at most 65536 bytes.
     /// @return This command buffer.
+    /// @throws std::runtime_error if size is not a non-zero multiple of 4 or exceeds 65536.
     template <typename Container>
         requires std::ranges::contiguous_range<Container>
     CommandBuffer& update_buffer(vk::Buffer dst, vk::DeviceSize offset, const Container& data) {
@@ -518,6 +522,7 @@ public:
                                   uint32_t size);
 
     /// @brief Pushes one trivially copyable value to the pipeline layout.
+    /// @tparam T Trivially copyable value type.
     /// @param layout Pipeline layout.
     /// @param stages Shader stages that read the constants.
     /// @param offset Byte offset in the push constant range.

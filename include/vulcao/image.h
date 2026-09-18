@@ -36,6 +36,7 @@ public:
     /// @param image_info Image creation parameters.
     /// @param view_info View creation parameters. If format is undefined, a view is derived from image_info.
     /// @return The created image.
+    /// @throws std::runtime_error if the allocator is invalid or the image cannot be created.
     static Image create(Allocator& allocator,
                         const vk::ImageCreateInfo& image_info,
                         vk::ImageViewCreateInfo view_info = {});
@@ -48,6 +49,7 @@ public:
     /// @param mip_levels Number of mip levels.
     /// @param samples Sample count.
     /// @return The created image.
+    /// @throws std::runtime_error if the allocator is invalid or the image cannot be created.
     static Image create_2d(Allocator& allocator,
                            vk::Extent2D extent,
                            vk::Format format,
@@ -60,6 +62,7 @@ public:
     /// @param extent Image width and height.
     /// @param format Depth format.
     /// @return The created image.
+    /// @throws std::runtime_error if the allocator is invalid or the image cannot be created.
     static Image create_depth(Allocator& allocator,
                               vk::Extent2D extent,
                               vk::Format format = vk::Format::eD32Sfloat);

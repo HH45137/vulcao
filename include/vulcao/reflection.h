@@ -10,23 +10,23 @@ namespace vulcao {
 
 /// @brief A descriptor set and its bindings.
 struct DescriptorSetLayoutInfo {
-    uint32_t set = 0;
-    std::vector<vk::DescriptorSetLayoutBinding> bindings;
+    uint32_t set = 0;                                  ///< Descriptor set index.
+    std::vector<vk::DescriptorSetLayoutBinding> bindings; ///< Bindings of the set.
 };
 
 /// @brief A specialization constant declared by a shader.
 struct SpecializationConstantInfo {
-    uint32_t constant_id = 0;
-    uint32_t default_value = 0;
+    uint32_t constant_id = 0;   ///< Constant id declared in the shader.
+    uint32_t default_value = 0; ///< Default value declared in the shader.
 };
 
 /// @brief Reflection data of a single shader stage.
 struct ShaderReflection {
-    vk::ShaderStageFlags stage;
-    std::vector<DescriptorSetLayoutInfo> sets;
-    std::vector<vk::PushConstantRange> push_constants;
-    std::vector<vk::VertexInputAttributeDescription> vertex_attributes;
-    std::vector<SpecializationConstantInfo> specialization_constants;
+    vk::ShaderStageFlags stage;                                       ///< Stage the module was reflected for.
+    std::vector<DescriptorSetLayoutInfo> sets;                        ///< Descriptor sets used by the stage.
+    std::vector<vk::PushConstantRange> push_constants;                ///< Push constant ranges of the stage.
+    std::vector<vk::VertexInputAttributeDescription> vertex_attributes; ///< Vertex inputs, for vertex stages.
+    std::vector<SpecializationConstantInfo> specialization_constants; ///< Specialization constants.
 
     /// @brief Returns the bindings of a descriptor set, or an empty range if the set is unused.
     /// @param set Descriptor set index.
@@ -36,8 +36,8 @@ struct ShaderReflection {
 
 /// @brief Merged reflection data of several shader stages.
 struct PipelineReflection {
-    std::vector<DescriptorSetLayoutInfo> sets;
-    std::vector<vk::PushConstantRange> push_constants;
+    std::vector<DescriptorSetLayoutInfo> sets;   ///< Merged descriptor sets.
+    std::vector<vk::PushConstantRange> push_constants; ///< Merged push constant ranges.
 };
 
 /// @brief Reflects a SPIR-V module.

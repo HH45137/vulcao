@@ -19,30 +19,33 @@ class Context;
 /// The pointer members are owned by the FrameManager and stay valid until the
 /// next call to begin_frame() for the same slot or until the manager is destroyed.
 struct Frame {
-    uint32_t slot = 0;
-    uint32_t image_index = 0;
-    CommandBuffer* command_buffer = nullptr;
-    vk::Fence in_flight_fence;
-    vk::Semaphore image_available;
-    vk::Semaphore render_finished;
-    bool active = false;
+    uint32_t slot = 0;                              ///< Frame in flight slot.
+    uint32_t image_index = 0;                       ///< Acquired swapchain image index.
+    CommandBuffer* command_buffer = nullptr;        ///< Command buffer to record into.
+    vk::Fence in_flight_fence;                      ///< Fence signaled when the submission completes.
+    vk::Semaphore image_available;                  ///< Semaphore the submission waits on.
+    vk::Semaphore render_finished;                  ///< Semaphore the submission signals.
+    bool active = false;                            ///< True between begin_frame and end_frame.
 };
 
 /// @brief Creation parameters of a FrameManager.
 struct FrameManagerInfo {
-    uint32_t frames_in_flight = 2;
+    uint32_t frames_in_flight = 2; ///< Number of frames that may be in flight.
 };
 
 /// @brief Drives the per-frame synchronization of a swapchain rendering loop.
 ///
 /// Owns the command pools, in-flight fences and semaphores used to record and
-/// submit one frame at a time. Single threaded; must be destroyed before the
-/// Context it was created from.
+/// submit one frame at a time.
+/// @warning Single threaded. It must be destroyed before the Context it was
+///          created from.
 class FrameManager {
 public:
     /// @brief Creates a FrameManager for an initialized context.
     /// @param context Context that owns the device and swapchain.
     /// @param info Frame manager creation parameters.
+    /// @throws std::runtime_error if the context is not initialized, has no swapchain, or
+    ///         frames_in_flight is zero.
     explicit FrameManager(Context& context, const FrameManagerInfo& info = {});
 
     /// @brief Waits for in-flight work and destroys the owned synchronization objects.
@@ -66,9 +69,10 @@ public:
 
     /// @brief Waits for the slot's fence, acquires the next image and starts recording.
     ///
-    /// Throws vk::OutOfDateKHRError if the swapchain is out of date; the caller
-    /// should then call recreate_swapchain().
+    /// The caller should call recreate_swapchain() on vk::OutOfDateKHRError.
     /// @return The acquired frame.
+    /// @throws vk::OutOfDateKHRError if the swapchain is out of date.
+    /// @throws std::runtime_error if acquiring the image fails for another reason.
     Frame begin_frame();
 
     /// @brief Ends recording and submits the frame on the graphics queue.

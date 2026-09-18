@@ -5,6 +5,16 @@
 
 namespace vulcao {
 
+/// @namespace vulcao
+/// @brief A thin, RAII wrapper around Vulkan that removes repetitive setup
+///        without hiding the API.
+///
+/// The library owns its Vulkan objects with move-only semantics, throws
+/// std::runtime_error on failure and derives descriptor, push constant and
+/// vertex layouts from SPIR-V reflection. Raw handles and creation structs stay
+/// visible: render graphs, bindless registries and renderers are expected to be
+/// built on top of it, not inside it.
+
 /// @brief Severity of a log message.
 enum class LogLevel {
     trace,
@@ -26,10 +36,10 @@ enum class LogCategory {
 /// The string views point to storage owned by the caller and are only valid for
 /// the duration of the callback. Copy them if they must outlive the call.
 struct LogMessage {
-    LogLevel level = LogLevel::info;
-    LogCategory category = LogCategory::general;
-    std::string_view message;
-    std::string_view message_id;
+    LogLevel level = LogLevel::info;             ///< Severity.
+    LogCategory category = LogCategory::general; ///< Source.
+    std::string_view message;                    ///< Message text.
+    std::string_view message_id;                 ///< Message id, such as a VUID, or empty.
 };
 
 /// @brief Callback invoked for every log message.
@@ -50,6 +60,8 @@ std::string_view to_string(LogCategory category);
 /// An empty callback restores default_log_callback. Replacing the callback is
 /// safe while messages are being logged.
 /// @param callback Callback to install, or an empty function for the default.
+/// @note The callback is process wide. Set it before creating a Context to also
+///       receive messages emitted during instance creation.
 void set_log_callback(LogCallback callback);
 
 /// @brief Returns a copy of the global log callback.

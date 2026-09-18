@@ -37,6 +37,7 @@ public:
     /// @param memory_usage VMA memory usage hint.
     /// @param flags VMA allocation flags.
     /// @return The created buffer.
+    /// @throws std::runtime_error if the allocator is invalid or the buffer cannot be created.
     static Buffer create(Allocator& allocator,
                          vk::DeviceSize size,
                          vk::BufferUsageFlags usage,
@@ -69,6 +70,7 @@ public:
 
     /// @brief Maps the memory and returns a pointer to it.
     /// @return Pointer to the mapped memory.
+    /// @throws std::runtime_error if the buffer is not host visible or mapping fails.
     void* map();
 
     /// @brief Unmaps the memory if it was mapped by map().
@@ -77,20 +79,25 @@ public:
     /// @brief Flushes a range of the allocation to make writes visible to the device.
     /// @param offset Byte offset of the range.
     /// @param size Size of the range, or VK_WHOLE_SIZE.
+    /// @throws std::runtime_error if the flush fails.
     void flush(vk::DeviceSize offset = 0, vk::DeviceSize size = VK_WHOLE_SIZE);
 
     /// @brief Invalidates a range of the allocation to make device writes visible to the host.
     /// @param offset Byte offset of the range.
     /// @param size Size of the range, or VK_WHOLE_SIZE.
+    /// @throws std::runtime_error if the invalidate fails.
     void invalidate(vk::DeviceSize offset = 0, vk::DeviceSize size = VK_WHOLE_SIZE);
 
     /// @brief Copies raw bytes into a host visible buffer.
     /// @param data Source pointer.
     /// @param size Number of bytes to copy.
     /// @param offset Byte offset in the buffer.
+    /// @throws std::runtime_error if the range is out of bounds, the buffer is not host
+    ///         visible, or the copy fails.
     void write_bytes(const void* data, vk::DeviceSize size, vk::DeviceSize offset = 0);
 
     /// @brief Copies a contiguous range of trivially copyable values into a host visible buffer.
+    /// @tparam Container Contiguous range of trivially copyable values.
     /// @param data Source range.
     /// @param offset Byte offset in the buffer.
     template <typename Container>

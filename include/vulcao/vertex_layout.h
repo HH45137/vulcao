@@ -15,8 +15,8 @@ namespace vulcao {
 
 /// @brief Vertex input bindings and attributes.
 struct VertexLayout {
-    std::vector<vk::VertexInputBindingDescription> bindings;
-    std::vector<vk::VertexInputAttributeDescription> attributes;
+    std::vector<vk::VertexInputBindingDescription> bindings;    ///< Vertex input bindings.
+    std::vector<vk::VertexInputAttributeDescription> attributes; ///< Vertex input attributes.
 };
 
 /// @brief Builds a vertex layout from reflected attributes and member offsets.
@@ -25,6 +25,7 @@ struct VertexLayout {
 /// @param member_offsets Byte offsets of the members, in attribute location order.
 /// @param binding Vertex binding index.
 /// @return Bindings and attributes matching the reflection.
+/// @throws std::runtime_error if the attribute count does not match member_offsets.
 template <typename Vertex>
 VertexLayout make_vertex_layout(const ShaderReflection& reflection,
                                 std::initializer_list<size_t> member_offsets,
