@@ -103,6 +103,25 @@ DescriptorPool DescriptorPool::create(vk::Device device,
     return pool;
 }
 
+DescriptorPool DescriptorPool::create_for_bindings(
+    vk::Device device, vk::ArrayProxy<const vk::DescriptorSetLayoutBinding> bindings,
+    uint32_t set_count, vk::DescriptorPoolCreateFlags flags) {
+    if (set_count == 0)
+        throw std::runtime_error("DescriptorPool::create_for_bindings: set_count must be non-zero");
+
+    // std::map keeps the sizes in a deterministic order.
+    std::map<vk::DescriptorType, uint32_t> counts;
+    for (const vk::DescriptorSetLayoutBinding& binding : bindings)
+        counts[binding.descriptorType] += binding.descriptorCount * set_count;
+
+    std::vector<vk::DescriptorPoolSize> sizes;
+    sizes.reserve(counts.size());
+    for (const auto& [type, count] : counts)
+        sizes.push_back(vk::DescriptorPoolSize{type, count});
+
+    return create(device, sizes, set_count, flags);
+}
+
 DescriptorSet DescriptorPool::allocate(const DescriptorSetLayout& layout,
                                        uint32_t variable_descriptor_count) {
     if (!layout.valid())

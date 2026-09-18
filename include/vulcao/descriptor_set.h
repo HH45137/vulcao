@@ -114,6 +114,24 @@ public:
                                  uint32_t max_sets,
                                  vk::DescriptorPoolCreateFlags flags = {});
 
+    /// @brief Creates a pool sized for a number of sets with the given bindings.
+    ///
+    /// The pool sizes are computed from the bindings: every descriptor type gets
+    /// its count summed over the bindings and multiplied by @p set_count, which
+    /// also becomes the maximum number of sets. Combine with reflection
+    /// (ShaderReflection::bindings_for_set) to size a pool without counting
+    /// descriptors by hand, e.g. set_count = frames in flight.
+    /// @param device Device that creates the pool.
+    /// @param bindings Bindings of one set.
+    /// @param set_count Number of sets that must be allocatable, must be non-zero.
+    /// @param flags Pool creation flags.
+    /// @return The created descriptor pool.
+    /// @throws std::runtime_error if set_count is zero.
+    static DescriptorPool create_for_bindings(vk::Device device,
+                                              vk::ArrayProxy<const vk::DescriptorSetLayoutBinding> bindings,
+                                              uint32_t set_count,
+                                              vk::DescriptorPoolCreateFlags flags = {});
+
     /// @brief Returns true if the pool holds a valid handle.
     bool valid() const { return static_cast<bool>(pool_); }
 

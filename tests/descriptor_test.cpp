@@ -317,3 +317,56 @@ TEST_CASE("descriptor indexing layouts support binding flags and variable counts
         MESSAGE("logged error: ", error);
     CHECK(capture.errors.empty());
 }
+
+TEST_CASE("descriptor pool create_for_bindings sizes the pool from the bindings") {
+    VULCAO_REQUIRE_DEVICE();
+
+    const vulcao::test::LogLevelGuard log_level_guard;
+    vulcao::set_log_level(vulcao::LogLevel::warning);
+
+    vulcao::ContextInfo info;
+    info.headless = true;
+    info.validation = true;
+
+    vulcao::Context context{info};
+    context.initialize();
+
+    // One set uses 2 uniform buffers and 1 combined image sampler; the pool
+    // must hold 3 sets of that shape without any hand-counted sizes.
+    const std::array<DescriptorSetLayoutBinding, 3> bindings{{
+        DescriptorSetLayoutBinding{.binding = 0,
+                                   .descriptorType = DescriptorType::eUniformBuffer,
+                                   .descriptorCount = 1,
+                                   .stageFlags = ShaderStageFlagBits::eVertex},
+        DescriptorSetLayoutBinding{.binding = 1,
+                                   .descriptorType = DescriptorType::eUniformBuffer,
+                                   .descriptorCount = 1,
+                                   .stageFlags = ShaderStageFlagBits::eVertex},
+        DescriptorSetLayoutBinding{.binding = 2,
+                                   .descriptorType = DescriptorType::eCombinedImageSampler,
+                                   .descriptorCount = 1,
+                                   .stageFlags = ShaderStageFlagBits::eFragment},
+    }};
+
+    CHECK_THROWS_AS(vulcao::DescriptorPool::create_for_bindings(context.device(), bindings, 0),
+                    std::runtime_error);
+
+    vulcao::DescriptorPool pool =
+        vulcao::DescriptorPool::create_for_bindings(context.device(), bindings, 3);
+    const vulcao::DescriptorSetLayout layout =
+        vulcao::DescriptorSetLayout::create(context.device(), bindings);
+
+    // Exactly three sets fit: the fourth allocation proves the sizes were
+    // multiplied by the set count, not more.
+    for (uint32_t i = 0; i < 3; ++i)
+        CHECK(pool.allocate(layout).valid());
+    CHECK_THROWS(pool.allocate(layout));
+
+    // An empty set still gets a usable (sizeless) pool.
+    const std::array<DescriptorSetLayoutBinding, 0> no_bindings{};
+    vulcao::DescriptorPool empty_pool =
+        vulcao::DescriptorPool::create_for_bindings(context.device(), no_bindings, 2);
+    const vulcao::DescriptorSetLayout empty_layout =
+        vulcao::DescriptorSetLayout::create(context.device(), no_bindings);
+    CHECK(empty_pool.allocate(empty_layout).valid());
+}
