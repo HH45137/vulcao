@@ -6,8 +6,9 @@
 //
 // The positions come from a vertex buffer rather than SV_VertexID on purpose:
 // Slang lowers SV_VertexID to gl_VertexIndex plus BaseVertex, and BaseVertex
-// needs the SPIR-V DrawParameters capability, which in turn needs the Vulkan 1.1
-// shaderDrawParameters feature to be enabled on the device.
+// needs the SPIR-V DrawParameters capability, which in turn needs
+// DeviceFeatures::shader_draw_parameters. A vertex buffer keeps this sample's
+// device requirements at their minimum.
 
 struct PushData
 {

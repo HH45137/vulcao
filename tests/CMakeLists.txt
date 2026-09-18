@@ -27,6 +27,7 @@ vulcao_find_slangc(SLANGC_EXECUTABLE)
 if(SLANGC_EXECUTABLE)
     vulcao_add_slang_shaders(vulcao_tests
         "reflection.slang|vertMain|vertex|reflection.vert.spv"
+        "reflection.slang|vertexIndexMain|vertex|reflection.index.vert.spv"
         "reflection.slang|fragMain|fragment|reflection.frag.spv"
         "reflection.slang|computeMain|compute|reflection.comp.spv"
     )

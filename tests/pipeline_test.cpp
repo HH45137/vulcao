@@ -342,4 +342,51 @@ TEST_CASE("graphics pipelines build from a reflected vertex layout") {
     CHECK(capture.errors.empty());
 }
 
+TEST_CASE("shader draw parameters can be requested for a vertex index shader") {
+    VULCAO_REQUIRE_DEVICE();
+
+    const vulcao::test::LogLevelGuard log_level_guard;
+    vulcao::set_log_level(vulcao::LogLevel::warning);
+
+    vulcao::test::ErrorCapture capture;
+
+    vulcao::ContextInfo info;
+    info.headless = true;
+    info.validation = true;
+    info.device_features.shader_draw_parameters = true;
+
+    vulcao::Context context{info};
+    context.initialize();
+
+    // This entry point reads SV_VertexID, so its SPIR-V declares the
+    // DrawParameters capability and creating the module without
+    // shader_draw_parameters would raise a validation error.
+    const std::filesystem::path dir = vulcao::test::shader_dir();
+    const vulcao::ShaderModule vertex = vulcao::ShaderModule::create_from_file(
+        context.device(), vk::ShaderStageFlagBits::eVertex, dir / "reflection.index.vert.spv");
+    const vulcao::ShaderModule fragment = vulcao::ShaderModule::create_from_file(
+        context.device(), vk::ShaderStageFlagBits::eFragment, dir / "reflection.frag.spv");
+    REQUIRE(vertex.valid());
+    REQUIRE(fragment.valid());
+
+    const std::array<vulcao::ShaderReflection, 2> reflections{vertex.reflection(),
+                                                              fragment.reflection()};
+    const vulcao::PipelineLayout layout =
+        vulcao::PipelineLayout::create_from_reflection(context.device(), reflections);
+    REQUIRE(layout.valid());
+
+    const vulcao::Pipeline pipeline = vulcao::Pipeline::create_graphics(
+        context.device(), layout,
+        vulcao::GraphicsPipelineInfo{
+            .vertex_shader = vertex.handle(),
+            .fragment_shader = fragment.handle(),
+            .vertex_entry = "vertexIndexMain",
+            .fragment_entry = "fragMain",
+            .color_formats = {vk::Format::eB8G8R8A8Unorm},
+        });
+    CHECK(pipeline.valid());
+
+    CHECK(capture.errors.empty());
+}
+
 #endif

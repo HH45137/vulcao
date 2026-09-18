@@ -240,6 +240,10 @@ void Context::pick_physical_device() {
         .shaderInt64 = wanted.shader_int64 ? VK_TRUE : VK_FALSE,
     });
 
+    selector.set_required_features_11(vk::PhysicalDeviceVulkan11Features{
+        .shaderDrawParameters = wanted.shader_draw_parameters ? VK_TRUE : VK_FALSE,
+    });
+
     selector.set_required_features_13(vk::PhysicalDeviceVulkan13Features{
         .synchronization2 = VK_TRUE,
         .dynamicRendering = VK_TRUE,

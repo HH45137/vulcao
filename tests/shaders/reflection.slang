@@ -38,6 +38,19 @@ VSOut vertMain([[vk::location(0)]] float3 position : POSITION,
     return output;
 }
 
+// Reads SV_VertexID, which makes Slang declare the SPIR-V DrawParameters
+// capability: it lowers SV_VertexID to gl_VertexIndex plus BaseVertex, and
+// BaseVertex is what needs the capability. Building a module from this entry
+// point therefore requires DeviceFeatures::shader_draw_parameters.
+[shader("vertex")]
+VSOut vertexIndexMain(uint id : SV_VertexID)
+{
+    VSOut output;
+    output.position = float4(float(id), 0.0, 0.0, 1.0);
+    output.color = float3(1.0, 0.0, 0.0);
+    return output;
+}
+
 [shader("fragment")]
 float4 fragMain([[vk::location(0)]] float3 color) : SV_Target
 {

@@ -35,6 +35,7 @@ struct DeviceFeatures {
     bool wide_lines = false;                 ///< Enable line widths other than 1.
     bool depth_clamp = false;                ///< Enable depth clamping.
     bool draw_indirect_first_instance = false; ///< Enable the firstInstance parameter of indirect draws.
+    bool shader_draw_parameters = false;       ///< Enable the DrawParameters capability for gl_VertexIndex.
 };
 
 /// @brief Creation parameters of a Context.
