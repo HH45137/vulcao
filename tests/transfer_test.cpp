@@ -167,3 +167,41 @@ TEST_CASE("upload with mip generation requires TransferSrc usage") {
     CHECK_NOTHROW(context.download(with_src, readback));
     CHECK(readback == pixels);
 }
+
+TEST_CASE("Buffer::create_with_data folds creation and upload into one call") {
+    VULCAO_REQUIRE_DEVICE();
+
+    vulcao::test::ErrorCapture capture;
+
+    vulcao::ContextInfo info;
+    info.headless = true;
+    info.validation = true;
+
+    vulcao::Context context{info};
+    context.initialize();
+
+    const std::vector<uint32_t> data{7, 11, 13, 17, 19, 23};
+
+    // The container overload adds TransferDst by itself.
+    vulcao::Buffer buffer = vulcao::Buffer::create_with_data(
+        context, data, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc);
+    REQUIRE(buffer.valid());
+    CHECK(buffer.size() == data.size() * sizeof(uint32_t));
+    CHECK(static_cast<bool>(buffer.usage() & vk::BufferUsageFlagBits::eTransferDst));
+    CHECK(static_cast<bool>(buffer.usage() & vk::BufferUsageFlagBits::eStorageBuffer));
+
+    std::vector<uint32_t> readback(data.size());
+    context.download(buffer, readback);
+    CHECK(readback == data);
+
+    // The raw pointer overload takes any byte range.
+    const std::vector<uint8_t> bytes{1, 2, 3, 4, 5, 6, 7, 8};
+    vulcao::Buffer raw = vulcao::Buffer::create_with_data(
+        context, bytes.data(), static_cast<vk::DeviceSize>(bytes.size()),
+        vk::BufferUsageFlagBits::eTransferSrc);
+    std::vector<uint8_t> raw_readback(bytes.size());
+    context.download(raw, raw_readback);
+    CHECK(raw_readback == bytes);
+
+    CHECK(capture.errors.empty());
+}

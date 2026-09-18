@@ -11,6 +11,8 @@
 
 namespace vulcao {
 
+class Context;
+
 /// @brief RAII wrapper around a VMA-allocated buffer.
 class Buffer {
 public:
@@ -43,6 +45,43 @@ public:
                          vk::BufferUsageFlags usage,
                          VmaMemoryUsage memory_usage = VMA_MEMORY_USAGE_AUTO,
                          VmaAllocationCreateFlags flags = 0);
+
+    /// @brief Creates a buffer and uploads data into it through the context.
+    ///
+    /// Folds the recurring create-then-upload pair into one call. TransferDst is
+    /// added to @p usage automatically; the default memory usage keeps the
+    /// buffer device local.
+    /// @param context Context used for the allocation and the upload.
+    /// @param data Source pointer.
+    /// @param size Number of bytes to create and upload.
+    /// @param usage Buffer usage flags, TransferDst is added.
+    /// @param memory_usage VMA memory usage hint.
+    /// @param flags VMA allocation flags.
+    /// @return The created and uploaded buffer.
+    /// @throws std::runtime_error if creation or upload fails.
+    static Buffer create_with_data(Context& context,
+                                   const void* data,
+                                   vk::DeviceSize size,
+                                   vk::BufferUsageFlags usage,
+                                   VmaMemoryUsage memory_usage = VMA_MEMORY_USAGE_AUTO,
+                                   VmaAllocationCreateFlags flags = 0);
+
+    /// @brief Creates a buffer and uploads a contiguous range into it.
+    /// @tparam Container Contiguous range of trivially copyable values.
+    /// @param context Context used for the allocation and the upload.
+    /// @param data Source range.
+    /// @param usage Buffer usage flags, TransferDst is added.
+    /// @param memory_usage VMA memory usage hint.
+    /// @param flags VMA allocation flags.
+    /// @return The created and uploaded buffer.
+    /// @throws std::runtime_error if creation or upload fails.
+    template <typename Container>
+        requires std::ranges::contiguous_range<Container>
+    static Buffer create_with_data(Context& context,
+                                   const Container& data,
+                                   vk::BufferUsageFlags usage,
+                                   VmaMemoryUsage memory_usage = VMA_MEMORY_USAGE_AUTO,
+                                   VmaAllocationCreateFlags flags = 0);
 
     /// @brief Returns true if the buffer holds a valid handle.
     bool valid() const { return buffer_ != VK_NULL_HANDLE; }

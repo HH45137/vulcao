@@ -484,4 +484,19 @@ private:
     bool immediate_active_ = false;
 };
 
+// Defined here, where Context is complete.
+template <typename Container>
+    requires std::ranges::contiguous_range<Container>
+Buffer Buffer::create_with_data(Context& context,
+                                const Container& data,
+                                vk::BufferUsageFlags usage,
+                                VmaMemoryUsage memory_usage,
+                                VmaAllocationCreateFlags flags) {
+    using T = std::ranges::range_value_t<Container>;
+    static_assert(std::is_trivially_copyable_v<T>, "buffer data must be trivially copyable");
+    return create_with_data(context, std::ranges::data(data),
+                            static_cast<vk::DeviceSize>(std::ranges::size(data)) * sizeof(T), usage,
+                            memory_usage, flags);
+}
+
 }

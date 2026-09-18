@@ -1,6 +1,7 @@
 #include "vulcao/buffer.h"
 
 #include "vulcao/check.h"
+#include "vulcao/context.h"
 
 #include <stdexcept>
 #include <utility>
@@ -70,6 +71,18 @@ Buffer Buffer::create(Allocator& allocator,
     vmaGetMemoryTypeProperties(buffer.allocator_, buffer.info_.memoryType, &memory_flags);
     buffer.host_visible_ = (memory_flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0;
 
+    return buffer;
+}
+
+Buffer Buffer::create_with_data(Context& context,
+                                const void* data,
+                                vk::DeviceSize size,
+                                vk::BufferUsageFlags usage,
+                                VmaMemoryUsage memory_usage,
+                                VmaAllocationCreateFlags flags) {
+    Buffer buffer = create(context.allocator(), size,
+                           usage | vk::BufferUsageFlagBits::eTransferDst, memory_usage, flags);
+    context.upload(buffer, data, size);
     return buffer;
 }
 
