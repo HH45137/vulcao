@@ -3,6 +3,7 @@ name: ci
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
@@ -17,17 +18,23 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: jurplel/install-vulkan-sdk@v1
-
-      - name: Install lavapipe and validation layers
+      - name: Install Vulkan (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers vulkan-validationlayers
+          sudo apt-get install -y --no-install-recommends \
+            libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers
 
       - name: Check lavapipe ICD
         if: runner.os == 'Linux'
         run: test -f /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+
+      - name: Install Vulkan SDK (Windows)
+        if: runner.os == 'Windows'
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.4.309.0
+          cache: true
 
       - name: Configure
         run: cmake -S . -B build -DVULCAO_BUILD_SAMPLES=OFF -DVULCAO_BUILD_TESTS=ON
