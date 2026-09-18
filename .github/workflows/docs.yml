@@ -1,0 +1,53 @@
+name: docs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Doxygen 1.16.1 and Graphviz
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends graphviz curl
+          curl -sSL -o doxygen.tar.gz \
+            https://github.com/doxygen/doxygen/releases/download/Release_1_16_1/doxygen-1.16.1.linux.bin.tar.gz
+          tar -xzf doxygen.tar.gz
+          echo "$PWD/doxygen-1.16.1/bin" >> "$GITHUB_PATH"
+          echo "LD_LIBRARY_PATH=$PWD/doxygen-1.16.1/lib" >> "$GITHUB_ENV"
+
+      - name: Generate
+        run: doxygen docs/Doxyfile
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/generated/html
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
