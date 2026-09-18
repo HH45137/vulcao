@@ -178,7 +178,7 @@ std::vector<PhysicalDeviceInfo> Context::enumerate_physical_devices() const {
     for (const vk::PhysicalDevice& physical_device : instance_.enumeratePhysicalDevices()) {
         const vk::PhysicalDeviceProperties properties = physical_device.getProperties();
         result.push_back(PhysicalDeviceInfo{
-            .name = properties.deviceName,
+            .name = properties.deviceName.data(),
             .type = properties.deviceType,
             .vendor_id = properties.vendorID,
             .driver_version = properties.driverVersion,
@@ -252,7 +252,7 @@ void Context::pick_physical_device() {
     physical_device_ = vk::PhysicalDevice{vkb_physical_device_.physical_device};
 
     const vk::PhysicalDeviceProperties properties = physical_device_.getProperties();
-    log(LogLevel::info, "GPU: " + std::string(properties.deviceName) + " (" +
+    log(LogLevel::info, "GPU: " + std::string(properties.deviceName.data()) + " (" +
                             device_type_name(static_cast<VkPhysicalDeviceType>(properties.deviceType)) +
                             ")");
 }
