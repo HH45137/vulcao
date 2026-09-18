@@ -50,6 +50,17 @@ Options:
 
 Run the tests with `ctest --test-dir build`.
 
+## Samples
+
+- `01_hello_triangle`: a CPU-side vertex and index buffer drawn through a full
+  graphics pipeline.
+- `02_uniforms`: the triangle spun by a uniform buffer and descriptor set.
+
+```sh
+./build/samples/01_hello_triangle/hello_triangle
+./build/samples/02_uniforms/uniforms
+```
+
 ## Using from another project
 
 ```sh
