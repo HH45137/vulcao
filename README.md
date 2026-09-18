@@ -10,15 +10,21 @@ layouts from SPIR-V reflection.
   command pool, with configurable device features/extensions and dedicated
   compute/transfer queues. Created headless (`ContextInfo::headless`) it skips
   the surface and swapchain for compute-only or offscreen work.
-- Resources: VMA-backed `Allocator`, `Buffer`, `Image` (2D/depth factories,
-  mipmap generation), `Sampler` and `CommandPool`.
+- Resources: VMA-backed `Allocator`, `Buffer` (including `create_with_data`, the
+  create-and-upload pair in one call), `Image` (2D/depth factories, mipmap
+  generation), `Sampler` and `CommandPool`.
 - Transfer: staging-backed `upload`/`download` for buffers and images, with the
   full `vk::BufferImageCopy` region exposed for row-pitched data.
 - Synchronization: `Fence`, binary and timeline `Semaphore`, `QueryPool` and a
   `FrameManager` that owns frames in flight, swapchain acquire and present.
-- Recording: `CommandBuffer` with layout transitions, copies, mipmaps, draws,
-  dispatches, queries, dynamic state, debug labels and queue family ownership
-  transfers (release/acquire).
+- Recording: `CommandBuffer` with layout transitions (including swapchain
+  `transition_to_render`/`transition_to_present` helpers), copies, mipmaps,
+  draws, dispatches, queries, dynamic state, debug labels and queue family
+  ownership transfers (release/acquire), plus `color_attachment`/
+  `depth_attachment` builders and a full-extent `begin_rendering` convenience.
+- Descriptors: `DescriptorPool::create_for_bindings` sizes a pool from a
+  reflected set's bindings (e.g. one set per frame in flight) without
+  hand-counted pool sizes.
 - Pipelines: `ShaderModule` with SPIR-V reflection, `DescriptorSetLayout/Pool/Set`
   with a batching writer and layout cache, `PipelineLayout`, `Pipeline` with
   graphics/compute factories, specialization constants and `PipelineCache`.

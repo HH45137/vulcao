@@ -107,9 +107,9 @@ int main() {
                 context.allocator(), sizeof(glm::mat4), vk::BufferUsageFlagBits::eUniformBuffer,
                 VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT));
 
-        const vk::DescriptorPoolSize pool_size{vk::DescriptorType::eUniformBuffer, frame_count};
-        vulcao::DescriptorPool descriptor_pool =
-            vulcao::DescriptorPool::create(context.device(), pool_size, frame_count);
+        // The pool is sized from the reflected bindings, one set per frame.
+        vulcao::DescriptorPool descriptor_pool = vulcao::DescriptorPool::create_for_bindings(
+            context.device(), vertex.reflection().bindings_for_set(0), frame_count);
 
         std::vector<vulcao::DescriptorSet> descriptor_sets;
         descriptor_sets.reserve(frame_count);
