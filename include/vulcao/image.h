@@ -12,6 +12,16 @@ namespace vulcao {
 /// @return Color, depth or depth-stencil aspect flags.
 vk::ImageAspectFlags image_aspect_for_format(vk::Format format);
 
+/// @brief Returns the number of bytes a tightly packed image of that extent occupies.
+///
+/// Follows the texel block layout, so compressed formats round the extent up to
+/// whole blocks. Describes one mip level of one array layer, which is what
+/// Context::upload and Context::download move.
+/// @param extent Image extent. Depth is ignored for non-3D images, which use 1.
+/// @param format Image format.
+/// @return Size in bytes.
+vk::DeviceSize image_byte_size(vk::Extent3D extent, vk::Format format);
+
 /// @brief RAII wrapper around a VMA-allocated image, its view and tracked layout.
 class Image {
 public:

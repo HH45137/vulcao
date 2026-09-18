@@ -215,10 +215,11 @@ public:
     /// @brief Uploads raw bytes to an image and transitions it to a final layout.
     /// @param dst Destination image, must have TransferDst usage.
     /// @param data Source pointer.
-    /// @param size Number of bytes to upload.
+    /// @param size Number of bytes to upload. Must cover mip 0 of the image.
     /// @param final_layout Layout the image is transitioned to after the upload.
     /// @param generate_mips True to generate the mip chain after uploading level 0.
-    /// @throws std::runtime_error if dst is invalid or lacks TransferDst usage.
+    /// @throws std::runtime_error if dst is invalid, lacks TransferDst usage, or size is
+    ///         smaller than image_byte_size(dst.extent(), dst.format()).
     void upload(Image& dst,
                 const void* data,
                 vk::DeviceSize size,
@@ -271,8 +272,9 @@ public:
     /// @brief Reads mip 0, layer 0 of an image into host memory and restores its layout.
     /// @param src Source image, must have TransferSrc usage.
     /// @param data Destination pointer.
-    /// @param size Number of bytes to read.
-    /// @throws std::runtime_error if src is invalid or lacks TransferSrc usage.
+    /// @param size Number of bytes to read. Must cover mip 0 of the image.
+    /// @throws std::runtime_error if src is invalid, lacks TransferSrc usage, or size is
+    ///         smaller than image_byte_size(src.extent(), src.format()).
     void download(Image& src, void* data, vk::DeviceSize size);
 
     /// @brief Reads mip 0, layer 0 of an image into a contiguous range.

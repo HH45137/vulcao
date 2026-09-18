@@ -495,6 +495,12 @@ void Context::upload(Image& dst, const void* data, vk::DeviceSize size, vk::Imag
     if (!(dst.usage() & vk::ImageUsageFlagBits::eTransferDst))
         throw std::runtime_error("Context::upload: destination image requires TransferDst usage");
 
+    const vk::DeviceSize required = image_byte_size(dst.extent(), dst.format());
+    if (size < required)
+        throw std::runtime_error("Context::upload: " + std::to_string(size) +
+                                 " bytes are not enough for the destination image, which needs " +
+                                 std::to_string(required));
+
     Buffer& stage = staging(size);
     stage.write_bytes(data, size);
 
@@ -534,6 +540,12 @@ void Context::download(Image& src, void* data, vk::DeviceSize size) {
         throw std::runtime_error("Context::download: invalid source image");
     if (!(src.usage() & vk::ImageUsageFlagBits::eTransferSrc))
         throw std::runtime_error("Context::download: source image requires TransferSrc usage");
+
+    const vk::DeviceSize required = image_byte_size(src.extent(), src.format());
+    if (size < required)
+        throw std::runtime_error("Context::download: " + std::to_string(size) +
+                                 " bytes are not enough for the source image, which holds " +
+                                 std::to_string(required));
 
     Buffer& stage = staging(size);
     const vk::ImageLayout previous = src.layout();

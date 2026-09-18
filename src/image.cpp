@@ -2,8 +2,11 @@
 
 #include "vulcao/check.h"
 
+#include <array>
 #include <stdexcept>
 #include <utility>
+
+#include <vulkan/vulkan_format_traits.hpp>
 
 namespace vulcao {
 namespace {
@@ -37,6 +40,16 @@ vk::ImageAspectFlags image_aspect_for_format(vk::Format format) {
         default:
             return vk::ImageAspectFlagBits::eColor;
     }
+}
+
+vk::DeviceSize image_byte_size(vk::Extent3D extent, vk::Format format) {
+    const std::array<uint8_t, 3> block_extent = vk::blockExtent(format);
+    const vk::DeviceSize block_size = vk::blockSize(format);
+
+    const vk::DeviceSize blocks_x = (extent.width + block_extent[0] - 1) / block_extent[0];
+    const vk::DeviceSize blocks_y = (extent.height + block_extent[1] - 1) / block_extent[1];
+    const vk::DeviceSize blocks_z = (extent.depth + block_extent[2] - 1) / block_extent[2];
+    return blocks_x * blocks_y * blocks_z * block_size;
 }
 
 Image::~Image() {
