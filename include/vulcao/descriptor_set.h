@@ -133,6 +133,9 @@ private:
 };
 
 /// @brief Non-owning handle to a Vulkan descriptor set with writing helpers.
+///
+/// The write helpers are const: they update the Vulkan descriptor set, not this
+/// handle, so a const DescriptorSet can still be written to.
 class DescriptorSet {
 public:
     /// @brief Creates an empty descriptor set handle.
@@ -154,11 +157,11 @@ public:
     /// @param offset Byte offset in the buffer.
     /// @param range Byte size of the binding, or VK_WHOLE_SIZE.
     /// @return This descriptor set.
-    DescriptorSet& write_buffer(uint32_t binding,
+    const DescriptorSet& write_buffer(uint32_t binding,
                                 const Buffer& buffer,
                                 vk::DescriptorType type,
                                 vk::DeviceSize offset = 0,
-                                vk::DeviceSize range = VK_WHOLE_SIZE);
+                                vk::DeviceSize range = VK_WHOLE_SIZE) const;
 
     /// @brief Writes a uniform buffer descriptor.
     /// @param binding Binding index.
@@ -166,10 +169,10 @@ public:
     /// @param offset Byte offset in the buffer.
     /// @param range Byte size of the binding, or VK_WHOLE_SIZE.
     /// @return This descriptor set.
-    DescriptorSet& write_uniform_buffer(uint32_t binding,
+    const DescriptorSet& write_uniform_buffer(uint32_t binding,
                                         const Buffer& buffer,
                                         vk::DeviceSize offset = 0,
-                                        vk::DeviceSize range = VK_WHOLE_SIZE);
+                                        vk::DeviceSize range = VK_WHOLE_SIZE) const;
 
     /// @brief Writes a storage buffer descriptor.
     /// @param binding Binding index.
@@ -177,10 +180,10 @@ public:
     /// @param offset Byte offset in the buffer.
     /// @param range Byte size of the binding, or VK_WHOLE_SIZE.
     /// @return This descriptor set.
-    DescriptorSet& write_storage_buffer(uint32_t binding,
+    const DescriptorSet& write_storage_buffer(uint32_t binding,
                                         const Buffer& buffer,
                                         vk::DeviceSize offset = 0,
-                                        vk::DeviceSize range = VK_WHOLE_SIZE);
+                                        vk::DeviceSize range = VK_WHOLE_SIZE) const;
 
     /// @brief Writes a combined image sampler descriptor.
     /// @param binding Binding index.
@@ -188,19 +191,19 @@ public:
     /// @param sampler Sampler to bind.
     /// @param layout Layout the image is sampled in.
     /// @return This descriptor set.
-    DescriptorSet& write_image(uint32_t binding,
+    const DescriptorSet& write_image(uint32_t binding,
                                const Image& image,
                                const Sampler& sampler,
-                               vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal);
+                               vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal) const;
 
     /// @brief Writes a storage image descriptor.
     /// @param binding Binding index.
     /// @param image Image to bind.
     /// @param layout Layout the image is accessed in.
     /// @return This descriptor set.
-    DescriptorSet& write_storage_image(uint32_t binding,
+    const DescriptorSet& write_storage_image(uint32_t binding,
                                        const Image& image,
-                                       vk::ImageLayout layout = vk::ImageLayout::eGeneral);
+                                       vk::ImageLayout layout = vk::ImageLayout::eGeneral) const;
 
 private:
     friend class DescriptorPool;

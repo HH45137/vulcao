@@ -120,11 +120,11 @@ void DescriptorPool::destroy() {
     pool_ = nullptr;
 }
 
-DescriptorSet& DescriptorSet::write_buffer(uint32_t binding,
+const DescriptorSet& DescriptorSet::write_buffer(uint32_t binding,
                                            const Buffer& buffer,
                                            vk::DescriptorType type,
                                            vk::DeviceSize offset,
-                                           vk::DeviceSize range) {
+                                           vk::DeviceSize range) const {
     const vk::DescriptorBufferInfo info{
         .buffer = buffer.handle(),
         .offset = offset,
@@ -142,24 +142,24 @@ DescriptorSet& DescriptorSet::write_buffer(uint32_t binding,
     return *this;
 }
 
-DescriptorSet& DescriptorSet::write_uniform_buffer(uint32_t binding,
+const DescriptorSet& DescriptorSet::write_uniform_buffer(uint32_t binding,
                                                    const Buffer& buffer,
                                                    vk::DeviceSize offset,
-                                                   vk::DeviceSize range) {
+                                                   vk::DeviceSize range) const {
     return write_buffer(binding, buffer, vk::DescriptorType::eUniformBuffer, offset, range);
 }
 
-DescriptorSet& DescriptorSet::write_storage_buffer(uint32_t binding,
+const DescriptorSet& DescriptorSet::write_storage_buffer(uint32_t binding,
                                                    const Buffer& buffer,
                                                    vk::DeviceSize offset,
-                                                   vk::DeviceSize range) {
+                                                   vk::DeviceSize range) const {
     return write_buffer(binding, buffer, vk::DescriptorType::eStorageBuffer, offset, range);
 }
 
-DescriptorSet& DescriptorSet::write_image(uint32_t binding,
+const DescriptorSet& DescriptorSet::write_image(uint32_t binding,
                                           const Image& image,
                                           const Sampler& sampler,
-                                          vk::ImageLayout layout) {
+                                          vk::ImageLayout layout) const {
     const vk::DescriptorImageInfo info{
         .sampler = sampler.handle(),
         .imageView = image.view(),
@@ -177,9 +177,9 @@ DescriptorSet& DescriptorSet::write_image(uint32_t binding,
     return *this;
 }
 
-DescriptorSet& DescriptorSet::write_storage_image(uint32_t binding,
+const DescriptorSet& DescriptorSet::write_storage_image(uint32_t binding,
                                                   const Image& image,
-                                                  vk::ImageLayout layout) {
+                                                  vk::ImageLayout layout) const {
     const vk::DescriptorImageInfo info{
         .sampler = nullptr,
         .imageView = image.view(),
