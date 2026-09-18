@@ -53,7 +53,34 @@ TEST_CASE("access_for_layout maps common layouts") {
           access(vk::AccessFlagBits2::eShaderRead));
 }
 
-TEST_CASE("access_for_layout falls back to memory reads") {
+TEST_CASE("access_for_layout maps read only depth layouts") {
+    CHECK(vulcao::access_for_layout(vk::ImageLayout::eDepthStencilReadOnlyOptimal) ==
+          (access(vk::AccessFlagBits2::eDepthStencilAttachmentRead) |
+           access(vk::AccessFlagBits2::eShaderRead)));
+    CHECK(vulcao::access_for_layout(vk::ImageLayout::eDepthReadOnlyOptimal) ==
+          access(vk::AccessFlagBits2::eDepthStencilAttachmentRead));
+    CHECK(vulcao::access_for_layout(vk::ImageLayout::eStencilReadOnlyOptimal) ==
+          access(vk::AccessFlagBits2::eDepthStencilAttachmentRead));
+}
+
+TEST_CASE("access_for_layout includes writes for general layouts") {
+    // eGeneral admits writes; without the write bit a transition into or out of
+    // it would not order write-after-write hazards.
     CHECK(vulcao::access_for_layout(vk::ImageLayout::eGeneral) ==
-          access(vk::AccessFlagBits2::eMemoryRead));
+          (access(vk::AccessFlagBits2::eMemoryRead) |
+           access(vk::AccessFlagBits2::eMemoryWrite)));
+    CHECK(vulcao::access_for_layout(vk::ImageLayout::eAttachmentOptimal) ==
+          (access(vk::AccessFlagBits2::eMemoryRead) |
+           access(vk::AccessFlagBits2::eMemoryWrite)));
+}
+
+TEST_CASE("stage_for_layout maps read only depth layouts") {
+    const vk::PipelineStageFlags2 depth_read_stages =
+        stages(vk::PipelineStageFlagBits2::eEarlyFragmentTests) |
+        stages(vk::PipelineStageFlagBits2::eLateFragmentTests) |
+        stages(vk::PipelineStageFlagBits2::eFragmentShader);
+    CHECK(vulcao::stage_for_layout(vk::ImageLayout::eDepthStencilReadOnlyOptimal) ==
+          depth_read_stages);
+    CHECK(vulcao::stage_for_layout(vk::ImageLayout::eDepthReadOnlyOptimal) == depth_read_stages);
+    CHECK(vulcao::stage_for_layout(vk::ImageLayout::eStencilReadOnlyOptimal) == depth_read_stages);
 }
