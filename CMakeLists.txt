@@ -11,6 +11,7 @@ option(VULCAO_BUILD_DOCS "Build API documentation with Doxygen" OFF)
 option(VULCAO_INSTALL "Generate vulcao install rules" ${PROJECT_IS_TOP_LEVEL})
 
 set(VULCAO_THIRD_PARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
+set(VULCAO_CMAKE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 find_package(Vulkan REQUIRED)
 

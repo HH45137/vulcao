@@ -17,8 +17,8 @@
 #include "vulcao/shader_module.h"
 #include "vulcao/vertex_layout.h"
 
-#ifndef VULCAO_SAMPLE_SHADER_DIR
-#define VULCAO_SAMPLE_SHADER_DIR "shaders"
+#ifndef VULCAO_SHADER_DIR
+#define VULCAO_SHADER_DIR "shaders"
 #endif
 
 namespace {
@@ -37,7 +37,7 @@ const std::array<Vertex, 3> triangle_vertices{{
 const std::array<uint16_t, 3> triangle_indices{{0, 1, 2}};
 
 std::filesystem::path shader_path(const char* name) {
-    return std::filesystem::path(VULCAO_SAMPLE_SHADER_DIR) / name;
+    return std::filesystem::path(VULCAO_SHADER_DIR) / name;
 }
 
 }
