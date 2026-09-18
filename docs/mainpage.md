@@ -50,6 +50,8 @@ The `samples/` directory contains small, focused programs:
 - `02_uniforms`: the triangle spun by a uniform buffer and descriptor set.
 - `03_compute`: a storage buffer transformed by a compute shader, with the result
   verified on the CPU. Headless, so it needs no display.
+- `04_offscreen`: a triangle rendered into an image, then read back and checked
+  pixel by pixel. Headless as well.
 
 ## Where to start
 

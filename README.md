@@ -60,11 +60,14 @@ Run the tests with `ctest --test-dir build`.
 - `03_compute`: a storage buffer transformed by a compute shader, with the result
   verified on the CPU. Needs no display, and exits non-zero on a wrong result or
   on a validation error.
+- `04_offscreen`: a triangle rendered into an image, then read back and checked
+  pixel by pixel. Also needs no display.
 
 ```sh
 ./build/samples/01_hello_triangle/hello_triangle
 ./build/samples/02_uniforms/uniforms
 ./build/samples/03_compute/compute
+./build/samples/04_offscreen/offscreen
 ```
 
 ## Documentation
