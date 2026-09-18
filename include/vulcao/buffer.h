@@ -81,7 +81,15 @@ public:
                                    const Container& data,
                                    vk::BufferUsageFlags usage,
                                    VmaMemoryUsage memory_usage = VMA_MEMORY_USAGE_AUTO,
-                                   VmaAllocationCreateFlags flags = 0);
+                                   VmaAllocationCreateFlags flags = 0) {
+        using T = std::ranges::range_value_t<Container>;
+        static_assert(std::is_trivially_copyable_v<T>, "buffer data must be trivially copyable");
+        // Only forwards the context by reference, so the forward declaration of
+        // Context above is enough; the member access lives in the raw overload.
+        return create_with_data(context, std::ranges::data(data),
+                                static_cast<vk::DeviceSize>(std::ranges::size(data)) * sizeof(T),
+                                usage, memory_usage, flags);
+    }
 
     /// @brief Returns true if the buffer holds a valid handle.
     bool valid() const { return buffer_ != VK_NULL_HANDLE; }
