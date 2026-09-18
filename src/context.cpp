@@ -87,6 +87,13 @@ Context::~Context() {
 
     if (surface_)
         instance_.destroySurfaceKHR(surface_);
+    if (debug_messenger_) {
+        const auto destroy_messenger = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
+            instance_.getProcAddr("vkDestroyDebugUtilsMessengerEXT"));
+        if (destroy_messenger != nullptr)
+            destroy_messenger(instance_, debug_messenger_, nullptr);
+        debug_messenger_ = nullptr;
+    }
     if (vkb_instance_.instance)
         vkb::destroy_instance(vkb_instance_);
 }
@@ -134,13 +141,7 @@ void Context::create_instance(const ContextInfo& info) {
                              VK_VERSION_PATCH(info.api_version));
 
     if (info.validation) {
-        builder.request_validation_layers()
-            .set_debug_callback(&validation_callback)
-            .set_debug_messenger_severity(static_cast<VkDebugUtilsMessageSeverityFlagsEXT>(
-                info.validation_severity))
-            .set_debug_messenger_type(VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-                                      VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
-                                      VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT);
+        builder.request_validation_layers().enable_extension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
 
     for (const char* extension : info.extensions)
@@ -151,7 +152,22 @@ void Context::create_instance(const ContextInfo& info) {
     vkb_instance_ = check(builder.build(), "create instance");
     instance_ = vk::Instance{vkb_instance_.instance};
 
-    debug_utils_enabled_ = vkb_instance_.debug_messenger != VK_NULL_HANDLE;
+    // The messenger is created here instead of through vk-bootstrap. Bootstrap
+    // caches its instance function pointers process wide on the first instance it
+    // builds and never invalidates them, so an instance created without
+    // VK_EXT_debug_utils would break the messenger of every later instance that
+    // asks for validation. Resolving the entry point per instance avoids that.
+    //
+    // Trade-off: bootstrap also chains its messenger create info into the instance
+    // create info, which makes the layers deliver messages emitted while the
+    // instance itself is created. That chain cannot be reached from here, so those
+    // messages are lost. Errors from a malformed instance setup still surface as
+    // descriptive bootstrap errors.
+    if (info.validation) {
+        create_debug_messenger(info.validation_severity);
+    }
+
+    debug_utils_enabled_ = static_cast<bool>(debug_messenger_);
     for (const char* extension : info.extensions)
         if (std::string_view(extension) == VK_EXT_DEBUG_UTILS_EXTENSION_NAME)
             debug_utils_enabled_ = true;
@@ -159,6 +175,26 @@ void Context::create_instance(const ContextInfo& info) {
     if (debug_utils_enabled_)
         set_debug_name_ext_ = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
             instance_.getProcAddr("vkSetDebugUtilsObjectNameEXT"));
+}
+
+void Context::create_debug_messenger(vk::DebugUtilsMessageSeverityFlagsEXT severity) {
+    const auto create_messenger = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
+        instance_.getProcAddr("vkCreateDebugUtilsMessengerEXT"));
+    if (create_messenger == nullptr)
+        throw std::runtime_error("create debug messenger: vkCreateDebugUtilsMessengerEXT is missing");
+
+    VkDebugUtilsMessengerCreateInfoEXT create_info{};
+    create_info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    create_info.messageSeverity = static_cast<VkDebugUtilsMessageSeverityFlagsEXT>(severity);
+    create_info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                              VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                              VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+    create_info.pfnUserCallback = &validation_callback;
+
+    VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
+    check(static_cast<vk::Result>(create_messenger(instance_, &create_info, nullptr, &messenger)),
+          "create debug messenger");
+    debug_messenger_ = vk::DebugUtilsMessengerEXT{messenger};
 }
 
 void Context::set_debug_name(vk::ObjectType type, uint64_t handle, const char* name) const {

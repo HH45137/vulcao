@@ -369,6 +369,11 @@ private:
     /// @brief Creates the instance and the debug messenger.
     void create_instance(const ContextInfo& info);
 
+    /// @brief Creates the debug messenger for the current instance.
+    /// @param severity Severities the messenger forwards.
+    /// @throws std::runtime_error if the entry point is missing or creation fails.
+    void create_debug_messenger(vk::DebugUtilsMessageSeverityFlagsEXT severity);
+
     /// @brief Sends a message to the log callback if one is set.
     void log(LogLevel level, std::string_view message) const;
 
@@ -400,6 +405,7 @@ private:
 
     vk::Instance instance_;
     vk::SurfaceKHR surface_;
+    vk::DebugUtilsMessengerEXT debug_messenger_;
     vk::PhysicalDevice physical_device_;
     vk::Device device_;
     uint32_t api_version_ = VK_API_VERSION_1_3;
