@@ -351,21 +351,25 @@ CommandBuffer& CommandBuffer::copy_buffer(vk::Buffer src,
     return *this;
 }
 
+CommandBuffer& CommandBuffer::copy_buffer_to_image(vk::Buffer src, vk::Image dst,
+                                                   const vk::BufferImageCopy& region) {
+    cmd_.copyBufferToImage(src, dst, vk::ImageLayout::eTransferDstOptimal, region);
+    return *this;
+}
+
 CommandBuffer& CommandBuffer::copy_buffer_to_image(vk::Buffer src,
                                                    vk::Image dst,
                                                    vk::Extent3D extent,
                                                    const vk::ImageSubresourceLayers& layers,
                                                    vk::Offset3D offset) {
-    const vk::BufferImageCopy region{
-        .bufferOffset = 0,
-        .bufferRowLength = 0,
-        .bufferImageHeight = 0,
-        .imageSubresource = layers,
-        .imageOffset = offset,
-        .imageExtent = extent,
-    };
-    cmd_.copyBufferToImage(src, dst, vk::ImageLayout::eTransferDstOptimal, region);
-    return *this;
+    return copy_buffer_to_image(src, dst, vk::BufferImageCopy{
+                                             .bufferOffset = 0,
+                                             .bufferRowLength = 0,
+                                             .bufferImageHeight = 0,
+                                             .imageSubresource = layers,
+                                             .imageOffset = offset,
+                                             .imageExtent = extent,
+                                         });
 }
 
 CommandBuffer& CommandBuffer::copy_buffer_to_image(vk::Buffer src,
@@ -375,21 +379,25 @@ CommandBuffer& CommandBuffer::copy_buffer_to_image(vk::Buffer src,
                                 single_layer(dst.subresource_range()), offset);
 }
 
+CommandBuffer& CommandBuffer::copy_image_to_buffer(vk::Buffer dst, vk::Image src,
+                                                   const vk::BufferImageCopy& region) {
+    cmd_.copyImageToBuffer(src, vk::ImageLayout::eTransferSrcOptimal, dst, region);
+    return *this;
+}
+
 CommandBuffer& CommandBuffer::copy_image_to_buffer(vk::Buffer dst,
                                                    vk::Image src,
                                                    vk::Extent3D extent,
                                                    const vk::ImageSubresourceLayers& layers,
                                                    vk::Offset3D offset) {
-    const vk::BufferImageCopy region{
-        .bufferOffset = 0,
-        .bufferRowLength = 0,
-        .bufferImageHeight = 0,
-        .imageSubresource = layers,
-        .imageOffset = offset,
-        .imageExtent = extent,
-    };
-    cmd_.copyImageToBuffer(src, vk::ImageLayout::eTransferSrcOptimal, dst, region);
-    return *this;
+    return copy_image_to_buffer(dst, src, vk::BufferImageCopy{
+                                             .bufferOffset = 0,
+                                             .bufferRowLength = 0,
+                                             .bufferImageHeight = 0,
+                                             .imageSubresource = layers,
+                                             .imageOffset = offset,
+                                             .imageExtent = extent,
+                                         });
 }
 
 CommandBuffer& CommandBuffer::copy_image_to_buffer(vk::Buffer dst,

@@ -3,6 +3,7 @@
 #include "vulcao/check.h"
 #include "vulcao/image.h"
 
+#include <cstring>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -76,6 +77,7 @@ Context::~Context() {
 
         destroy_swapchain_resources();
 
+        staging_ = Buffer{};
         allocator_.destroy();
 
         if (vkb_swapchain_.swapchain)
@@ -387,9 +389,7 @@ void Context::submit_and_wait(vk::CommandBuffer cmd) {
     submit_fence_.reset();
     submit(cmd, submit_fence_.handle());
     submit_fence_.wait();
-}
-
-void Context::submit(const vk::SubmitInfo& info, vk::Fence fence) {
+}void Context::submit(const vk::SubmitInfo& info, vk::Fence fence) {
     submit(graphics_queue_, info, fence);
 }
 
@@ -442,13 +442,11 @@ void Context::upload(Buffer& dst, const void* data, vk::DeviceSize size) {
     if (size > dst.size())
         throw std::runtime_error("Context::upload: data size exceeds destination buffer size");
 
-    Buffer staging = Buffer::create(allocator_, size, vk::BufferUsageFlagBits::eTransferSrc,
-                                    VMA_MEMORY_USAGE_AUTO,
-                                    VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-    staging.write_bytes(data, size);
+    Buffer& stage = staging(size);
+    stage.write_bytes(data, size);
 
     immediate([&](CommandBuffer& cmd) {
-        cmd.copy_buffer(staging.handle(), dst.handle(), size);
+        cmd.copy_buffer(stage.handle(), dst.handle(), size);
     });
 }
 
@@ -461,19 +459,71 @@ void Context::upload(Image& dst, const void* data, vk::DeviceSize size, vk::Imag
     if (!(dst.usage() & vk::ImageUsageFlagBits::eTransferDst))
         throw std::runtime_error("Context::upload: destination image requires TransferDst usage");
 
-    Buffer staging = Buffer::create(allocator_, size, vk::BufferUsageFlagBits::eTransferSrc,
-                                    VMA_MEMORY_USAGE_AUTO,
-                                    VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-    staging.write_bytes(data, size);
+    Buffer& stage = staging(size);
+    stage.write_bytes(data, size);
 
     immediate([&](CommandBuffer& cmd) {
         cmd.transition(dst, vk::ImageLayout::eTransferDstOptimal);
-        cmd.copy_buffer_to_image(staging.handle(), dst);
+        cmd.copy_buffer_to_image(stage.handle(), dst);
         if (generate_mips && dst.mip_levels() > 1)
             cmd.generate_mipmaps(dst, final_layout);
         else
             cmd.transition(dst, final_layout);
     });
+}
+
+void Context::download(const Buffer& src, void* data, vk::DeviceSize size) {
+    if (size == 0)
+        return;
+    if (!src.valid())
+        throw std::runtime_error("Context::download: invalid source buffer");
+    if (!(src.usage() & vk::BufferUsageFlagBits::eTransferSrc))
+        throw std::runtime_error("Context::download: source buffer requires TransferSrc usage");
+    if (size > src.size())
+        throw std::runtime_error("Context::download: data size exceeds source buffer size");
+
+    Buffer& stage = staging(size);
+    immediate([&](CommandBuffer& cmd) {
+        cmd.copy_buffer(src.handle(), stage.handle(), size);
+    });
+
+    stage.invalidate(0, size);
+    std::memcpy(data, stage.map(), static_cast<size_t>(size));
+}
+
+void Context::download(Image& src, void* data, vk::DeviceSize size) {
+    if (size == 0)
+        return;
+    if (!src.valid())
+        throw std::runtime_error("Context::download: invalid source image");
+    if (!(src.usage() & vk::ImageUsageFlagBits::eTransferSrc))
+        throw std::runtime_error("Context::download: source image requires TransferSrc usage");
+
+    Buffer& stage = staging(size);
+    const vk::ImageLayout previous = src.layout();
+    immediate([&](CommandBuffer& cmd) {
+        cmd.transition(src, vk::ImageLayout::eTransferSrcOptimal);
+        cmd.copy_image_to_buffer(stage.handle(), src);
+        cmd.transition(src, previous);
+    });
+
+    stage.invalidate(0, size);
+    std::memcpy(data, stage.map(), static_cast<size_t>(size));
+}
+
+Buffer& Context::staging(vk::DeviceSize size) {
+    if (!staging_ || staging_.size() < size) {
+        vk::DeviceSize capacity = staging_ ? staging_.size() : (1u << 16);
+        while (capacity < size)
+            capacity *= 2;
+
+        staging_ = Buffer::create(allocator_, capacity,
+                                  vk::BufferUsageFlagBits::eTransferSrc |
+                                      vk::BufferUsageFlagBits::eTransferDst,
+                                  VMA_MEMORY_USAGE_AUTO,
+                                  VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+    }
+    return staging_;
 }
 
 }

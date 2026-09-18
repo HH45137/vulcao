@@ -5,12 +5,14 @@
 #include <ranges>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #include <vulkan/vulkan.hpp>
 #include <VkBootstrap.h>
 
 #include "vulcao/allocator.h"
+#include "vulcao/buffer.h"
 #include "vulcao/command_buffer.h"
 #include "vulcao/command_pool.h"
 #include "vulcao/fence.h"
@@ -226,6 +228,44 @@ public:
                generate_mips);
     }
 
+    /// @brief Reads raw bytes from a buffer into host memory through a staging buffer.
+    /// @param src Source buffer, must have TransferSrc usage.
+    /// @param data Destination pointer.
+    /// @param size Number of bytes to read.
+    void download(const Buffer& src, void* data, vk::DeviceSize size);
+
+    /// @brief Reads from a buffer into a contiguous range.
+    /// @param src Source buffer, must have TransferSrc usage.
+    /// @param data Destination range.
+    template <typename Container>
+        requires std::ranges::contiguous_range<Container>
+    void download(const Buffer& src, Container& data) {
+        using T = std::ranges::range_value_t<Container>;
+        static_assert(std::is_trivially_copyable_v<T>, "buffer data must be trivially copyable");
+        download(src,
+                 std::ranges::data(data),
+                 static_cast<vk::DeviceSize>(std::ranges::size(data)) * sizeof(T));
+    }
+
+    /// @brief Reads mip 0, layer 0 of an image into host memory and restores its layout.
+    /// @param src Source image, must have TransferSrc usage.
+    /// @param data Destination pointer.
+    /// @param size Number of bytes to read.
+    void download(Image& src, void* data, vk::DeviceSize size);
+
+    /// @brief Reads mip 0, layer 0 of an image into a contiguous range.
+    /// @param src Source image, must have TransferSrc usage.
+    /// @param data Destination range.
+    template <typename Container>
+        requires std::ranges::contiguous_range<Container>
+    void download(Image& src, Container& data) {
+        using T = std::ranges::range_value_t<Container>;
+        static_assert(std::is_trivially_copyable_v<T>, "image data must be trivially copyable");
+        download(src,
+                 std::ranges::data(data),
+                 static_cast<vk::DeviceSize>(std::ranges::size(data)) * sizeof(T));
+    }
+
     /// @brief Returns true if the context has been initialized.
     bool initialized() const { return static_cast<bool>(device_); }
 
@@ -326,6 +366,9 @@ private:
     /// @brief Destroys swapchain images and image views.
     void destroy_swapchain_resources();
 
+    /// @brief Returns a host visible staging buffer that holds at least size bytes.
+    Buffer& staging(vk::DeviceSize size);
+
     vkb::Instance vkb_instance_;
     vkb::PhysicalDevice vkb_physical_device_;
     vkb::Device vkb_device_;
@@ -348,6 +391,7 @@ private:
     bool debug_utils_enabled_ = false;
     PFN_vkSetDebugUtilsObjectNameEXT set_debug_name_ext_ = nullptr;
     Allocator allocator_;
+    Buffer staging_;
     ContextInfo info_;
 
     vk::SwapchainKHR swapchain_;

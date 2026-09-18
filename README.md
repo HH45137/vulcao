@@ -12,6 +12,8 @@ layouts from SPIR-V reflection.
   the surface and swapchain for compute-only or offscreen work.
 - Resources: VMA-backed `Allocator`, `Buffer`, `Image` (2D/depth factories,
   mipmap generation), `Sampler` and `CommandPool`.
+- Transfer: staging-backed `upload`/`download` for buffers and images, with the
+  full `vk::BufferImageCopy` region exposed for row-pitched data.
 - Synchronization: `Fence`, binary and timeline `Semaphore`, `QueryPool` and a
   `FrameManager` that owns frames in flight, swapchain acquire and present.
 - Recording: `CommandBuffer` with layout transitions, copies, mipmaps, draws,

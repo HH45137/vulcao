@@ -232,6 +232,14 @@ public:
     /// @brief Copies a buffer into an image using raw handles.
     /// @param src Source buffer.
     /// @param dst Destination image, must be in TransferDst layout.
+    /// @param region Full copy region, including buffer offset, row length and extent.
+    /// @return This command buffer.
+    CommandBuffer& copy_buffer_to_image(vk::Buffer src, vk::Image dst,
+                                        const vk::BufferImageCopy& region);
+
+    /// @brief Copies a buffer into an image using raw handles.
+    /// @param src Source buffer.
+    /// @param dst Destination image, must be in TransferDst layout.
     /// @param extent Size of the copied region.
     /// @param layers Image subresource layers to copy into.
     /// @param offset Offset in the destination image.
@@ -250,6 +258,14 @@ public:
     CommandBuffer& copy_buffer_to_image(vk::Buffer src,
                                         const Image& dst,
                                         vk::Offset3D offset = vk::Offset3D{0, 0, 0});
+
+    /// @brief Copies an image into a buffer using raw handles.
+    /// @param dst Destination buffer.
+    /// @param src Source image, must be in TransferSrc layout.
+    /// @param region Full copy region, including buffer offset, row length and extent.
+    /// @return This command buffer.
+    CommandBuffer& copy_image_to_buffer(vk::Buffer dst, vk::Image src,
+                                        const vk::BufferImageCopy& region);
 
     /// @brief Copies an image into a buffer using raw handles.
     /// @param dst Destination buffer.
