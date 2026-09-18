@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <ranges>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -181,9 +182,18 @@ public:
                 vk::Fence fence = {});
 
     /// @brief Records one-time commands with the internal command buffer, submits and waits.
+    ///
+    /// Not reentrant: the context owns a single command buffer, so calling
+    /// immediate() from inside @p fn throws instead of resetting the buffer that
+    /// is currently being recorded. The flag is cleared even if @p fn throws.
     /// @param fn Callable that records commands, invoked with a CommandBuffer reference.
+    /// @throws std::runtime_error if called reentrantly or if the submission fails.
     template <typename Fn>
     void immediate(Fn&& fn) {
+        if (immediate_active_)
+            throw std::runtime_error("Context::immediate is not reentrant");
+
+        const ImmediateGuard guard{*this};
         immediate_command_buffer_.reset();
         immediate_command_buffer_.begin();
         fn(immediate_command_buffer_);
@@ -368,6 +378,22 @@ public:
     const CommandBuffer& immediate_command_buffer() const { return immediate_command_buffer_; }
 
 private:
+    /// @brief Marks the context as recording and clears the flag on destruction.
+    ///
+    /// Keeps the reentrancy flag correct when the recording callable throws.
+    struct ImmediateGuard {
+        explicit ImmediateGuard(Context& context) : context_(context) {
+            context_.immediate_active_ = true;
+        }
+
+        ~ImmediateGuard() { context_.immediate_active_ = false; }
+
+        ImmediateGuard(const ImmediateGuard&) = delete;
+        ImmediateGuard& operator=(const ImmediateGuard&) = delete;
+
+        Context& context_;
+    };
+
     /// @brief Creates the instance and the debug messenger.
     void create_instance(const ContextInfo& info);
 
@@ -436,6 +462,7 @@ private:
     CommandPool command_pool_;
     CommandBuffer immediate_command_buffer_;
     Fence submit_fence_;
+    bool immediate_active_ = false;
 };
 
 }
