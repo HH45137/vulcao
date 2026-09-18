@@ -32,9 +32,14 @@ public:
     Image& operator=(Image&& other) noexcept;
 
     /// @brief Creates an image, allocates its memory and creates its view.
+    ///
+    /// Fields of @p view_info left at their unset sentinel are derived from
+    /// @p image_info: viewType when it is e1D, format when it is undefined, and
+    /// the whole subresourceRange when its levelCount is zero. Set a field
+    /// explicitly to keep it as it is.
     /// @param allocator Allocator used for the memory.
     /// @param image_info Image creation parameters.
-    /// @param view_info View creation parameters. If format is undefined, a view is derived from image_info.
+    /// @param view_info View creation parameters, possibly only partially filled.
     /// @return The created image.
     /// @throws std::runtime_error if the allocator is invalid or the image cannot be created.
     static Image create(Allocator& allocator,

@@ -16,7 +16,8 @@ vk::ImageViewType view_type_for(const vk::ImageCreateInfo& image_info) {
             return vk::ImageViewType::e3D;
         default:
             if (image_info.flags & vk::ImageCreateFlagBits::eCubeCompatible)
-                return vk::ImageViewType::eCube;
+                return image_info.arrayLayers > 6 ? vk::ImageViewType::eCubeArray
+                                                  : vk::ImageViewType::eCube;
             return image_info.arrayLayers > 1 ? vk::ImageViewType::e2DArray : vk::ImageViewType::e2D;
     }
 }
@@ -89,17 +90,22 @@ Image Image::create(Allocator& allocator,
                                                  &image.image_, &image.allocation_, nullptr)),
           "create image");
 
-    if (view_info.format == vk::Format::eUndefined) {
+    if (view_info.viewType == vk::ImageViewType::e1D)
         view_info.viewType = view_type_for(image_info);
+
+    if (view_info.format == vk::Format::eUndefined)
         view_info.format = image_info.format;
+
+    if (view_info.subresourceRange.levelCount == 0) {
         view_info.subresourceRange = vk::ImageSubresourceRange{
-            .aspectMask = image_aspect_for_format(image_info.format),
+            .aspectMask = image_aspect_for_format(view_info.format),
             .baseMipLevel = 0,
             .levelCount = image_info.mipLevels,
             .baseArrayLayer = 0,
             .layerCount = image_info.arrayLayers,
         };
     }
+
     view_info.image = image.handle();
     image.view_ = image.device_.createImageView(view_info);
 
