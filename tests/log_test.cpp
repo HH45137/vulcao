@@ -1,6 +1,6 @@
 #include <string>
 #include <vector>
-
+#include <ostream>
 #include <doctest/doctest.h>
 
 #include <vulcao/log.h>
