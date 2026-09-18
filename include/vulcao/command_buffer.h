@@ -290,11 +290,20 @@ public:
                                         vk::Offset3D offset = vk::Offset3D{0, 0, 0});
 
     /// @brief Generates the mip chain of an image by blitting level to level.
-    /// @param image Image to generate mipmaps for. Its whole range must be in TransferDst layout with level 0 filled.
+    ///
+    /// Every layer of the image's subresource range is processed. The whole
+    /// range must be in TransferDst layout with mip 0 of every layer filled,
+    /// and the image must have been created with TransferSrc | TransferDst
+    /// usage. The caller must make sure the format supports blitting with the
+    /// chosen filter (VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT for
+    /// eLinear).
+    /// @param image Image to generate mipmaps for.
     /// @param final_layout Layout all levels are transitioned to at the end.
+    /// @param filter Filter used when scaling down between levels.
     /// @return This command buffer.
     CommandBuffer& generate_mipmaps(Image& image,
-                                    vk::ImageLayout final_layout = vk::ImageLayout::eShaderReadOnlyOptimal);
+                                    vk::ImageLayout final_layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                                    vk::Filter filter = vk::Filter::eLinear);
 
     /// @brief Copies one image into another using raw handles.
     /// @param src Source image.

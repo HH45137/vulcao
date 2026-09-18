@@ -407,48 +407,63 @@ CommandBuffer& CommandBuffer::copy_image_to_buffer(vk::Buffer dst,
                                 single_layer(src.subresource_range()), offset);
 }
 
-CommandBuffer& CommandBuffer::generate_mipmaps(Image& image, vk::ImageLayout final_layout) {
+CommandBuffer& CommandBuffer::generate_mipmaps(Image& image, vk::ImageLayout final_layout,
+                                               vk::Filter filter) {
     const uint32_t level_count = image.mip_levels();
     if (level_count <= 1) {
         transition(image, final_layout);
         return *this;
     }
 
-    const vk::ImageAspectFlags aspect = image.subresource_range().aspectMask;
+    const vk::ImageSubresourceRange full_range = image.subresource_range();
+    const vk::ImageAspectFlags aspect = full_range.aspectMask;
+    const uint32_t base_layer = full_range.baseArrayLayer;
+    const uint32_t layer_count = full_range.layerCount;
     const vk::Extent3D extent = image.extent();
     const vk::Image handle = image.handle();
 
+    const auto level_range = [&](uint32_t level) {
+        return vk::ImageSubresourceRange{aspect, level, 1, base_layer, layer_count};
+    };
+
+    // Level 0 starts in TransferDst and becomes the first blit source. Each
+    // level stays in TransferDst until it has been blitted into, then becomes
+    // the source of the next level and is only moved to the final layout once
+    // it is no longer needed: no layout is ever entered twice.
+    transition(handle, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eTransferSrcOptimal,
+               level_range(0));
+
     for (uint32_t level = 1; level < level_count; ++level) {
-        const vk::ImageSubresourceRange src_range{aspect, level - 1, 1, 0, 1};
-        const vk::ImageSubresourceRange dst_range{aspect, level, 1, 0, 1};
-
-        const vk::ImageLayout src_old =
-            level == 1 ? vk::ImageLayout::eTransferDstOptimal : final_layout;
-        transition(handle, src_old, vk::ImageLayout::eTransferSrcOptimal, src_range);
-
         const uint32_t src_width = std::max(1u, extent.width >> (level - 1));
         const uint32_t src_height = std::max(1u, extent.height >> (level - 1));
         const uint32_t dst_width = std::max(1u, extent.width >> level);
         const uint32_t dst_height = std::max(1u, extent.height >> level);
 
-        vk::ImageBlit region{};
-        region.srcSubresource = vk::ImageSubresourceLayers{aspect, level - 1, 0, 1};
-        region.srcOffsets[0] = vk::Offset3D{0, 0, 0};
-        region.srcOffsets[1] = vk::Offset3D{static_cast<int32_t>(src_width),
-                                            static_cast<int32_t>(src_height), 1};
-        region.dstSubresource = vk::ImageSubresourceLayers{aspect, level, 0, 1};
-        region.dstOffsets[0] = vk::Offset3D{0, 0, 0};
-        region.dstOffsets[1] = vk::Offset3D{static_cast<int32_t>(dst_width),
-                                            static_cast<int32_t>(dst_height), 1};
+        for (uint32_t layer = 0; layer < layer_count; ++layer) {
+            vk::ImageBlit region{};
+            region.srcSubresource =
+                vk::ImageSubresourceLayers{aspect, level - 1, base_layer + layer, 1};
+            region.srcOffsets[0] = vk::Offset3D{0, 0, 0};
+            region.srcOffsets[1] = vk::Offset3D{static_cast<int32_t>(src_width),
+                                                static_cast<int32_t>(src_height), 1};
+            region.dstSubresource = vk::ImageSubresourceLayers{aspect, level, base_layer + layer, 1};
+            region.dstOffsets[0] = vk::Offset3D{0, 0, 0};
+            region.dstOffsets[1] = vk::Offset3D{static_cast<int32_t>(dst_width),
+                                                static_cast<int32_t>(dst_height), 1};
 
-        blit_image(handle, vk::ImageLayout::eTransferSrcOptimal, handle,
-                   vk::ImageLayout::eTransferDstOptimal, region, vk::Filter::eLinear);
+            blit_image(handle, vk::ImageLayout::eTransferSrcOptimal, handle,
+                       vk::ImageLayout::eTransferDstOptimal, region, filter);
+        }
 
-        transition(handle, vk::ImageLayout::eTransferDstOptimal, final_layout, dst_range);
+        transition(handle, vk::ImageLayout::eTransferSrcOptimal, final_layout, level_range(level - 1));
+
+        if (level + 1 < level_count)
+            transition(handle, vk::ImageLayout::eTransferDstOptimal,
+                       vk::ImageLayout::eTransferSrcOptimal, level_range(level));
     }
 
-    const vk::ImageSubresourceRange source_levels{aspect, 0, level_count - 1, 0, 1};
-    transition(handle, vk::ImageLayout::eTransferSrcOptimal, final_layout, source_levels);
+    transition(handle, vk::ImageLayout::eTransferDstOptimal, final_layout,
+               level_range(level_count - 1));
 
     image.set_layout(final_layout);
     return *this;
