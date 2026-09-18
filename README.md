@@ -109,4 +109,4 @@ auto pipeline = vulcao::Pipeline::create_compute(ctx.device(), layout, shader, "
 
 ## License
 
-TBD.
+MIT, see [LICENSE](LICENSE).
