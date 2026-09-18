@@ -164,6 +164,18 @@ public:
     /// @return A new fence signaled when the submission completes.
     Fence submit(vk::CommandBuffer cmd);
 
+    /// @brief Submits a command buffer on the graphics queue using a recycled fence.
+    ///
+    /// The returned fence is owned by the context: later submit_pooled calls
+    /// recycle any fence that is already signaled, which avoids a fence
+    /// creation and destruction per submission. Wait on the fence (or stop
+    /// needing it) before the next submit_pooled call, because a recycled
+    /// fence is reset and re-signaled by the new submission. Use the
+    /// Fence-returning submit() when the fence must outlive later submissions.
+    /// @param cmd Command buffer to submit.
+    /// @return A context-owned fence signaled when the submission completes.
+    vk::Fence submit_pooled(vk::CommandBuffer cmd);
+
     /// @brief Submits commands on an arbitrary queue without waiting.
     /// @param queue Queue to submit to.
     /// @param info Submission parameters.
@@ -224,12 +236,14 @@ public:
     }
 
     /// @brief Uploads raw bytes to an image and transitions it to a final layout.
-    /// @param dst Destination image, must have TransferDst usage.
+    /// @param dst Destination image, must have TransferDst usage, plus TransferSrc
+    ///        usage when generate_mips is true and the image has a mip chain.
     /// @param data Source pointer.
     /// @param size Number of bytes to upload. Must cover mip 0 of the image.
     /// @param final_layout Layout the image is transitioned to after the upload.
     /// @param generate_mips True to generate the mip chain after uploading level 0.
-    /// @throws std::runtime_error if dst is invalid, lacks TransferDst usage, or size is
+    /// @throws std::runtime_error if dst is invalid, lacks TransferDst usage (or
+    ///         TransferSrc usage when generating mipmaps), or size is
     ///         smaller than image_byte_size(dst.extent(), dst.format()).
     void upload(Image& dst,
                 const void* data,
@@ -239,11 +253,13 @@ public:
 
     /// @brief Uploads a contiguous range to an image and transitions it to a final layout.
     /// @tparam Container Contiguous range of trivially copyable values.
-    /// @param dst Destination image, must have TransferDst usage.
+    /// @param dst Destination image, must have TransferDst usage, plus TransferSrc
+    ///        usage when generate_mips is true and the image has a mip chain.
     /// @param data Source range.
     /// @param final_layout Layout the image is transitioned to after the upload.
     /// @param generate_mips True to generate the mip chain after uploading level 0.
-    /// @throws std::runtime_error if dst is invalid or lacks TransferDst usage.
+    /// @throws std::runtime_error if dst is invalid or lacks TransferDst usage (or
+    ///         TransferSrc usage when generating mipmaps).
     template <typename Container>
         requires std::ranges::contiguous_range<Container>
     void upload(Image& dst,
@@ -463,6 +479,8 @@ private:
     CommandPool command_pool_;
     CommandBuffer immediate_command_buffer_;
     Fence submit_fence_;
+    /// @brief Context-owned fences recycled by submit_pooled().
+    std::vector<Fence> fence_pool_;
     bool immediate_active_ = false;
 };
 

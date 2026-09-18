@@ -72,6 +72,7 @@ Context::~Context() {
         if (command_pool_) {
             immediate_command_buffer_.destroy();
             submit_fence_.destroy();
+            fence_pool_.clear();
             command_pool_.destroy();
         }
 
@@ -474,6 +475,22 @@ Fence Context::submit(vk::CommandBuffer cmd) {
     return fence;
 }
 
+vk::Fence Context::submit_pooled(vk::CommandBuffer cmd) {
+    // A signaled fence is safe to recycle: waits on it have already completed
+    // or return immediately. Fences still in flight keep their slot.
+    for (Fence& fence : fence_pool_) {
+        if (!fence.signaled())
+            continue;
+        fence.reset();
+        submit(cmd, fence.handle());
+        return fence.handle();
+    }
+
+    fence_pool_.push_back(Fence::create(device_));
+    submit(cmd, fence_pool_.back().handle());
+    return fence_pool_.back().handle();
+}
+
 void Context::upload(Buffer& dst, const void* data, vk::DeviceSize size) {
     if (size == 0)
         return;
@@ -500,6 +517,10 @@ void Context::upload(Image& dst, const void* data, vk::DeviceSize size, vk::Imag
         throw std::runtime_error("Context::upload: invalid destination image");
     if (!(dst.usage() & vk::ImageUsageFlagBits::eTransferDst))
         throw std::runtime_error("Context::upload: destination image requires TransferDst usage");
+    if (generate_mips && dst.mip_levels() > 1 &&
+        !(dst.usage() & vk::ImageUsageFlagBits::eTransferSrc))
+        throw std::runtime_error(
+            "Context::upload: generating mipmaps requires TransferSrc usage on the destination image");
 
     const vk::DeviceSize required = image_byte_size(dst.extent(), dst.format());
     if (size < required)

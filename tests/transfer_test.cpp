@@ -128,3 +128,42 @@ TEST_CASE("upload and download reject an image payload that is too small") {
     const std::vector<uint8_t> oversized(required + texel, 0x7f);
     CHECK_NOTHROW(context.upload(image, oversized));
 }
+
+TEST_CASE("upload with mip generation requires TransferSrc usage") {
+    VULCAO_REQUIRE_DEVICE();
+
+    vulcao::ContextInfo info;
+    info.headless = true;
+    info.validation = true;
+
+    vulcao::Context context{info};
+    context.initialize();
+
+    constexpr uint32_t width = 8;
+    constexpr uint32_t height = 8;
+    const std::vector<uint8_t> pixels(static_cast<size_t>(width) * height * 4, 0x40);
+
+    // TransferDst only: uploading level 0 is fine, generating mips is not.
+    vulcao::Image no_src = vulcao::Image::create_2d(
+        context.allocator(), vk::Extent2D{width, height}, vk::Format::eR8G8B8A8Unorm,
+        vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
+        4 /* mip_levels */);
+    CHECK_NOTHROW(context.upload(no_src, pixels));
+    CHECK_THROWS_AS(context.upload(no_src, pixels, vk::ImageLayout::eShaderReadOnlyOptimal, true),
+                    std::runtime_error);
+
+    // With TransferSrc the mip chain is generated and the layout is tracked.
+    vulcao::Image with_src = vulcao::Image::create_2d(
+        context.allocator(), vk::Extent2D{width, height}, vk::Format::eR8G8B8A8Unorm,
+        vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc |
+            vk::ImageUsageFlagBits::eTransferDst,
+        4 /* mip_levels */);
+    CHECK_NOTHROW(
+        context.upload(with_src, pixels, vk::ImageLayout::eShaderReadOnlyOptimal, true));
+    CHECK(with_src.layout() == vk::ImageLayout::eShaderReadOnlyOptimal);
+
+    // Mip 0 must survive the chain generation unchanged.
+    std::vector<uint8_t> readback(pixels.size());
+    CHECK_NOTHROW(context.download(with_src, readback));
+    CHECK(readback == pixels);
+}

@@ -71,3 +71,37 @@ TEST_CASE("contexts with different validation settings coexist in one process") 
         CHECK(second.debug_utils_enabled());
     }
 }
+
+TEST_CASE("submit_pooled recycles signaled fences") {
+    VULCAO_REQUIRE_DEVICE();
+
+    const vulcao::test::LogLevelGuard log_level_guard;
+    vulcao::set_log_level(vulcao::LogLevel::warning);
+
+    vulcao::ContextInfo info;
+    info.headless = true;
+    info.validation = true;
+
+    vulcao::Context context{info};
+    context.initialize();
+
+    // A trivial command buffer submitted repeatedly. Not one-time submit: it is
+    // submitted more than once without re-recording.
+    vulcao::CommandBuffer cmd =
+        vulcao::CommandBuffer::allocate(context.device(), context.command_pool());
+    REQUIRE(cmd.valid());
+    cmd.begin(vk::CommandBufferUsageFlags{}).end();
+
+    // The first submission creates a fence in the pool.
+    const vk::Fence pooled = context.submit_pooled(cmd.handle());
+    CHECK(pooled != VK_NULL_HANDLE);
+    CHECK(context.device().waitForFences(pooled, VK_TRUE, UINT64_MAX) == vk::Result::eSuccess);
+
+    // Once signaled, the next pooled submission recycles the same fence instead
+    // of creating a new one.
+    const vk::Fence recycled = context.submit_pooled(cmd.handle());
+    CHECK(recycled == pooled);
+    CHECK(context.device().waitForFences(recycled, VK_TRUE, UINT64_MAX) == vk::Result::eSuccess);
+
+    context.wait_idle();
+}
