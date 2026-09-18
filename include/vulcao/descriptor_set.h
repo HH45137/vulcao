@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <map>
-#include <tuple>
 #include <vector>
 
 #include <vulkan/vulkan.hpp>
@@ -37,17 +36,33 @@ public:
     DescriptorSetLayout& operator=(DescriptorSetLayout&& other) noexcept;
 
     /// @brief Creates a descriptor set layout from bindings.
+    ///
+    /// This is the entry point for descriptor indexing (bindless-style) usage:
+    /// pass vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool in
+    /// @p flags and per-binding flags such as ePartiallyBound or
+    /// eVariableDescriptorCount in @p binding_flags, then allocate from a pool
+    /// created with vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind. These
+    /// flags require the descriptor indexing device feature.
     /// @param device Device that creates the layout.
-    /// @param bindings Bindings of the layout.
+    /// @param bindings Bindings of the layout. descriptorCount must be non-zero;
+    ///        give reflected runtime arrays a concrete upper bound first.
+    /// @param flags Layout creation flags.
+    /// @param binding_flags Per-binding flags, empty or one entry per binding.
     /// @return The created descriptor set layout.
+    /// @throws std::runtime_error if a descriptorCount is zero or binding_flags
+    ///         is neither empty nor one entry per binding.
     static DescriptorSetLayout create(vk::Device device,
-                                      vk::ArrayProxy<const vk::DescriptorSetLayoutBinding> bindings);
+                                      vk::ArrayProxy<const vk::DescriptorSetLayoutBinding> bindings,
+                                      vk::DescriptorSetLayoutCreateFlags flags = {},
+                                      vk::ArrayProxy<const vk::DescriptorBindingFlags> binding_flags = {});
 
     /// @brief Creates a descriptor set layout from reflected shader bindings.
     /// @param device Device that creates the layout.
     /// @param reflection Shader reflection data.
     /// @param set Descriptor set index to create the layout for.
     /// @return The created descriptor set layout.
+    /// @throws std::runtime_error if the set contains a runtime array; set a
+    ///         concrete count with set_binding_count and use the bindings overload.
     static DescriptorSetLayout create(vk::Device device,
                                       const ShaderReflection& reflection,
                                       uint32_t set);
@@ -110,15 +125,21 @@ public:
 
     /// @brief Allocates one descriptor set. The pool must outlive the returned set.
     /// @param layout Layout of the set.
+    /// @param variable_descriptor_count When the layout's last binding has the
+    ///        eVariableDescriptorCount flag, the number of descriptors allocated
+    ///        for it. 0 to allocate the count declared by the layout.
     /// @return The allocated descriptor set.
     /// @throws std::runtime_error if the layout is invalid or allocation fails.
-    DescriptorSet allocate(const DescriptorSetLayout& layout);
+    DescriptorSet allocate(const DescriptorSetLayout& layout, uint32_t variable_descriptor_count = 0);
 
     /// @brief Allocates one descriptor set from a raw layout handle.
     /// @param layout Layout of the set.
+    /// @param variable_descriptor_count When the layout's last binding has the
+    ///        eVariableDescriptorCount flag, the number of descriptors allocated
+    ///        for it. 0 to allocate the count declared by the layout.
     /// @return The allocated descriptor set.
     /// @throws std::runtime_error if the layout is invalid or allocation fails.
-    DescriptorSet allocate(vk::DescriptorSetLayout layout);
+    DescriptorSet allocate(vk::DescriptorSetLayout layout, uint32_t variable_descriptor_count = 0);
 
     /// @brief Resets the pool and frees all sets allocated from it.
     /// @param flags Reset flags.
@@ -284,6 +305,10 @@ private:
 };
 
 /// @brief Caches descriptor set layouts created from identical bindings.
+///
+/// The key covers the creation flags, and per binding the binding number,
+/// descriptor type and count, stage flags, descriptor binding flags and any
+/// immutable samplers, so layouts that differ in any of those do not collide.
 class DescriptorSetLayoutCache {
 public:
     /// @brief Creates a cache bound to a device.
@@ -292,15 +317,33 @@ public:
 
     /// @brief Returns a cached layout for the bindings, creating it on first use.
     /// @param bindings Bindings of the layout.
+    /// @param flags Layout creation flags, part of the cache key.
+    /// @param binding_flags Per-binding flags, empty or one entry per binding.
     /// @return The descriptor set layout handle.
-    vk::DescriptorSetLayout get(vk::ArrayProxy<const vk::DescriptorSetLayoutBinding> bindings);
+    vk::DescriptorSetLayout get(vk::ArrayProxy<const vk::DescriptorSetLayoutBinding> bindings,
+                                vk::DescriptorSetLayoutCreateFlags flags = {},
+                                vk::ArrayProxy<const vk::DescriptorBindingFlags> binding_flags = {});
 
     /// @brief Destroys all cached layouts.
     void clear();
 
 private:
     struct Key {
-        std::vector<std::tuple<uint32_t, vk::DescriptorType, uint32_t, vk::ShaderStageFlags>> entries;
+        struct Entry {
+            uint32_t binding = 0;
+            vk::DescriptorType type = vk::DescriptorType::eUniformBuffer;
+            uint32_t count = 0;
+            vk::ShaderStageFlags stages;
+            /// @brief Descriptor binding flags (ePartiallyBound and friends).
+            vk::DescriptorBindingFlags flags;
+            /// @brief Samplers baked into the binding, empty when none are immutable.
+            std::vector<vk::Sampler> immutable_samplers;
+
+            bool operator<(const Entry& other) const;
+        };
+
+        vk::DescriptorSetLayoutCreateFlags create_flags;
+        std::vector<Entry> entries;
         bool operator<(const Key& other) const;
     };
 

@@ -22,6 +22,11 @@ layouts from SPIR-V reflection.
 - Pipelines: `ShaderModule` with SPIR-V reflection, `DescriptorSetLayout/Pool/Set`
   with a batching writer and layout cache, `PipelineLayout`, `Pipeline` with
   graphics/compute factories, specialization constants and `PipelineCache`.
+- Descriptor indexing: layouts accept creation flags and per-binding flags
+  (`PARTIALLY_BOUND`, `UPDATE_AFTER_BIND`, `VARIABLE_DESCRIPTOR_COUNT`), pools
+  allocate variable descriptor counts, and reflected runtime arrays report
+  descriptor count 0 which `set_binding_count` turns into a concrete bound. The
+  building blocks for bindless, without prescribing a bindless design.
 - Reflection: descriptor sets, push constants and vertex attributes extracted from
   SPIR-V with SPIRV-Reflect, plus `make_vertex_layout`.
 - Logging: a global `set_log_callback` receives structured `LogMessage`s from the

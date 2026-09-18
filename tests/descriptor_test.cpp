@@ -191,3 +191,129 @@ TEST_CASE("descriptor set layout cache reuses layouts by binding set") {
     cache.clear();
     CHECK(cache.get(all_bindings) != VK_NULL_HANDLE);
 }
+
+TEST_CASE("descriptor set layout cache keys include immutable samplers") {
+    VULCAO_REQUIRE_DEVICE();
+
+    const vulcao::test::LogLevelGuard log_level_guard;
+    vulcao::set_log_level(vulcao::LogLevel::warning);
+
+    vulcao::ContextInfo info;
+    info.headless = true;
+    info.validation = true;
+
+    vulcao::Context context{info};
+    context.initialize();
+
+    vulcao::DescriptorSetLayoutCache cache{context.device()};
+
+    const vulcao::Sampler linear = vulcao::Sampler::linear(context.device());
+    const vulcao::Sampler nearest = vulcao::Sampler::nearest(context.device());
+
+    const vk::Sampler linear_handle = linear.handle();
+    const vk::Sampler nearest_handle = nearest.handle();
+
+    const auto make_binding = [](const vk::Sampler* samplers) {
+        return vk::DescriptorSetLayoutBinding{
+            .binding = 0,
+            .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+            .descriptorCount = 1,
+            .stageFlags = vk::ShaderStageFlagBits::eFragment,
+            .pImmutableSamplers = samplers,
+        };
+    };
+
+    const std::array<vk::DescriptorSetLayoutBinding, 1> with_linear{make_binding(&linear_handle)};
+    const std::array<vk::DescriptorSetLayoutBinding, 1> with_nearest{make_binding(&nearest_handle)};
+    const std::array<vk::DescriptorSetLayoutBinding, 1> without_samplers{make_binding(nullptr)};
+
+    // Same bindings with different baked-in samplers must not collide.
+    const vk::DescriptorSetLayout linear_layout = cache.get(with_linear);
+    CHECK(cache.get(with_linear) == linear_layout);
+    CHECK(cache.get(with_nearest) != linear_layout);
+    CHECK(cache.get(without_samplers) != linear_layout);
+    CHECK(cache.get(without_samplers) == cache.get(without_samplers));
+}
+
+TEST_CASE("descriptor indexing layouts support binding flags and variable counts") {
+    VULCAO_REQUIRE_DEVICE();
+
+    const vulcao::test::LogLevelGuard log_level_guard;
+    vulcao::set_log_level(vulcao::LogLevel::warning);
+
+    vulcao::test::ErrorCapture capture;
+
+    vulcao::ContextInfo info;
+    info.headless = true;
+    info.validation = true;
+    info.device_features.descriptor_indexing = true;
+
+    vulcao::Context context{info};
+    context.initialize();
+
+    using B = vk::DescriptorBindingFlagBits;
+
+    // A bindless-style layout: big partially bound arrays, updated after bind.
+    const std::array<DescriptorSetLayoutBinding, 2> indexed_bindings{{
+        DescriptorSetLayoutBinding{.binding = 0,
+                                   .descriptorType = DescriptorType::eSampledImage,
+                                   .descriptorCount = 1024,
+                                   .stageFlags = ShaderStageFlagBits::eFragment},
+        // The variable descriptor count binding must come last.
+        DescriptorSetLayoutBinding{.binding = 1,
+                                   .descriptorType = DescriptorType::eStorageBuffer,
+                                   .descriptorCount = 64,
+                                   .stageFlags = ShaderStageFlagBits::eFragment},
+    }};
+    const std::array<vk::DescriptorBindingFlags, 2> indexed_flags{{
+        B::ePartiallyBound | B::eUpdateAfterBind,
+        B::ePartiallyBound | B::eUpdateAfterBind | B::eVariableDescriptorCount,
+    }};
+
+    const vulcao::DescriptorSetLayout layout = vulcao::DescriptorSetLayout::create(
+        context.device(), indexed_bindings, vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
+        indexed_flags);
+    REQUIRE(layout.valid());
+
+    const std::array<vk::DescriptorPoolSize, 2> sizes{{
+        vk::DescriptorPoolSize{DescriptorType::eSampledImage, 2048},
+        vk::DescriptorPoolSize{DescriptorType::eStorageBuffer, 128},
+    }};
+    vulcao::DescriptorPool pool = vulcao::DescriptorPool::create(
+        context.device(), sizes, 2, vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind);
+
+    // Declared count allocation and a smaller variable count allocation.
+    CHECK(pool.allocate(layout).valid());
+    CHECK(pool.allocate(layout, 32).valid());
+
+    // Zero counts (a reflected runtime array) are rejected with a clear error.
+    std::array<DescriptorSetLayoutBinding, 1> runtime_array{indexed_bindings[0]};
+    runtime_array[0].descriptorCount = 0;
+    CHECK_THROWS_AS(vulcao::DescriptorSetLayout::create(context.device(), runtime_array),
+                    std::runtime_error);
+
+    // binding_flags must be empty or one entry per binding.
+    const std::array<vk::DescriptorBindingFlags, 1> short_flags{{B::ePartiallyBound}};
+    CHECK_THROWS_AS(
+        vulcao::DescriptorSetLayout::create(context.device(), indexed_bindings, {}, short_flags),
+        std::runtime_error);
+
+    // The cache key differentiates binding flags and creation flags.
+    const std::array<vk::DescriptorBindingFlags, 2> partial_flags{{
+        B::ePartiallyBound,
+        B::ePartiallyBound,
+    }};
+    vulcao::DescriptorSetLayoutCache cache{context.device()};
+    const vk::DescriptorSetLayout plain = cache.get(indexed_bindings);
+    CHECK(plain != VK_NULL_HANDLE);
+    CHECK(cache.get(indexed_bindings) == plain);
+    CHECK(cache.get(indexed_bindings, {}, partial_flags) != plain);
+    CHECK(cache.get(indexed_bindings, {}, partial_flags) ==
+          cache.get(indexed_bindings, {}, partial_flags));
+    CHECK(cache.get(indexed_bindings, vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
+                    indexed_flags) != plain);
+
+    for (const std::string& error : capture.errors)
+        MESSAGE("logged error: ", error);
+    CHECK(capture.errors.empty());
+}

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <tuple>
 #include <utility>
 
 namespace vulcao {
@@ -28,10 +29,28 @@ DescriptorSetLayout& DescriptorSetLayout::operator=(DescriptorSetLayout&& other)
 }
 
 DescriptorSetLayout DescriptorSetLayout::create(
-    vk::Device device, vk::ArrayProxy<const vk::DescriptorSetLayoutBinding> bindings) {
+    vk::Device device, vk::ArrayProxy<const vk::DescriptorSetLayoutBinding> bindings,
+    vk::DescriptorSetLayoutCreateFlags flags,
+    vk::ArrayProxy<const vk::DescriptorBindingFlags> binding_flags) {
+    if (!binding_flags.empty() && binding_flags.size() != bindings.size())
+        throw std::runtime_error(
+            "DescriptorSetLayout::create: binding_flags must be empty or match the binding count");
+    for (const vk::DescriptorSetLayoutBinding& binding : bindings)
+        if (binding.descriptorCount == 0)
+            throw std::runtime_error(
+                "DescriptorSetLayout::create: descriptorCount 0 is not valid; a reflected runtime "
+                "array needs a concrete upper bound, see set_binding_count");
+
+    const vk::DescriptorSetLayoutBindingFlagsCreateInfo binding_flags_info{
+        .bindingCount = static_cast<uint32_t>(binding_flags.size()),
+        .pBindingFlags = binding_flags.data(),
+    };
+
     DescriptorSetLayout layout;
     layout.device_ = device;
     layout.layout_ = device.createDescriptorSetLayout(vk::DescriptorSetLayoutCreateInfo{
+        .pNext = binding_flags.empty() ? nullptr : &binding_flags_info,
+        .flags = flags,
         .bindingCount = static_cast<uint32_t>(bindings.size()),
         .pBindings = bindings.data(),
     });
@@ -84,18 +103,27 @@ DescriptorPool DescriptorPool::create(vk::Device device,
     return pool;
 }
 
-DescriptorSet DescriptorPool::allocate(const DescriptorSetLayout& layout) {
+DescriptorSet DescriptorPool::allocate(const DescriptorSetLayout& layout,
+                                       uint32_t variable_descriptor_count) {
     if (!layout.valid())
         throw std::runtime_error("DescriptorPool::allocate: invalid layout");
-    return allocate(layout.handle());
+    return allocate(layout.handle(), variable_descriptor_count);
 }
 
-DescriptorSet DescriptorPool::allocate(vk::DescriptorSetLayout layout) {
+DescriptorSet DescriptorPool::allocate(vk::DescriptorSetLayout layout,
+                                       uint32_t variable_descriptor_count) {
     if (!layout)
         throw std::runtime_error("DescriptorPool::allocate: invalid layout");
 
+    const vk::DescriptorSetVariableDescriptorCountAllocateInfo variable_info{
+        .descriptorSetCount = 1,
+        .pDescriptorCounts = &variable_descriptor_count,
+    };
+
     const vk::DescriptorSet set = device_
                                       .allocateDescriptorSets(vk::DescriptorSetAllocateInfo{
+                                          .pNext = variable_descriptor_count > 0 ? &variable_info
+                                                                                 : nullptr,
                                           .descriptorPool = pool_,
                                           .descriptorSetCount = 1,
                                           .pSetLayouts = &layout,
@@ -315,24 +343,53 @@ void DescriptorSetWriter::clear() {
 
 DescriptorSetLayoutCache::DescriptorSetLayoutCache(vk::Device device) : device_(device) {}
 
+bool DescriptorSetLayoutCache::Key::Entry::operator<(const Entry& other) const {
+    const auto lhs = std::tie(binding, type, count, stages, flags);
+    const auto rhs = std::tie(other.binding, other.type, other.count, other.stages, other.flags);
+    if (lhs != rhs)
+        return lhs < rhs;
+    return immutable_samplers < other.immutable_samplers;
+}
+
 bool DescriptorSetLayoutCache::Key::operator<(const Key& other) const {
+    if (create_flags != other.create_flags)
+        return create_flags < other.create_flags;
     return entries < other.entries;
 }
 
 vk::DescriptorSetLayout DescriptorSetLayoutCache::get(
-    vk::ArrayProxy<const vk::DescriptorSetLayoutBinding> bindings) {
+    vk::ArrayProxy<const vk::DescriptorSetLayoutBinding> bindings,
+    vk::DescriptorSetLayoutCreateFlags flags,
+    vk::ArrayProxy<const vk::DescriptorBindingFlags> binding_flags) {
+    if (!binding_flags.empty() && binding_flags.size() != bindings.size())
+        throw std::runtime_error(
+            "DescriptorSetLayoutCache::get: binding_flags must be empty or match the binding count");
+
     Key key;
+    key.create_flags = flags;
     key.entries.reserve(bindings.size());
-    for (const vk::DescriptorSetLayoutBinding& binding : bindings)
-        key.entries.emplace_back(binding.binding, binding.descriptorType, binding.descriptorCount,
-                                 binding.stageFlags);
+    for (size_t i = 0; i < bindings.size(); ++i) {
+        const vk::DescriptorSetLayoutBinding& binding = bindings.data()[i];
+        Key::Entry entry;
+        entry.binding = binding.binding;
+        entry.type = binding.descriptorType;
+        entry.count = binding.descriptorCount;
+        entry.stages = binding.stageFlags;
+        entry.flags = binding_flags.empty() ? vk::DescriptorBindingFlags{} : binding_flags.data()[i];
+        // Immutable samplers are baked into the layout, so they must be part of
+        // the key or two layouts with different samplers would collide.
+        if (binding.pImmutableSamplers != nullptr)
+            entry.immutable_samplers.assign(binding.pImmutableSamplers,
+                                            binding.pImmutableSamplers + binding.descriptorCount);
+        key.entries.push_back(std::move(entry));
+    }
     std::sort(key.entries.begin(), key.entries.end());
 
     const auto it = cache_.find(key);
     if (it != cache_.end())
         return it->second.handle();
 
-    DescriptorSetLayout layout = DescriptorSetLayout::create(device_, bindings);
+    DescriptorSetLayout layout = DescriptorSetLayout::create(device_, bindings, flags, binding_flags);
     const vk::DescriptorSetLayout handle = layout.handle();
     cache_.emplace(std::move(key), std::move(layout));
     return handle;
