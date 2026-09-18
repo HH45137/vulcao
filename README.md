@@ -30,7 +30,7 @@ layouts from SPIR-V reflection.
 
 - CMake 3.24+
 - A C++20 compiler
-- The Vulkan SDK (also provides `slangc`, used by the sandbox)
+- The Vulkan SDK (also provides `slangc`, used by the samples)
 
 All other dependencies are git submodules.
 
@@ -44,7 +44,7 @@ cmake --build build
 
 Options:
 
-- `VULCAO_BUILD_SANDBOX` (default `ON`): build the sandbox example.
+- `VULCAO_BUILD_SAMPLES` (default `ON`): build the samples.
 - `VULCAO_BUILD_TESTS` (default `ON` when top level): build and register tests.
 - `VULCAO_INSTALL` (default `ON` when top level): generate install rules.
 

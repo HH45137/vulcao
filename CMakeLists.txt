@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-option(VULCAO_BUILD_SANDBOX "Build the vulcao sandbox example" ON)
+option(VULCAO_BUILD_SAMPLES "Build vulcao samples" ON)
 option(VULCAO_BUILD_TESTS "Build vulcao tests" ${PROJECT_IS_TOP_LEVEL})
 option(VULCAO_INSTALL "Generate vulcao install rules" ${PROJECT_IS_TOP_LEVEL})
 
@@ -116,10 +116,20 @@ if(VULCAO_INSTALL)
         DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/vulcao")
 endif()
 
-# --- examples ----------------------------------------------------------------
+# --- windowing ---------------------------------------------------------------
 
-if(VULCAO_BUILD_SANDBOX)
-    add_subdirectory(sandbox)
+if(VULCAO_BUILD_SAMPLES)
+    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${VULCAO_THIRD_PARTY_DIR}/glfw" "${CMAKE_BINARY_DIR}/third_party/glfw")
+endif()
+
+# --- samples -----------------------------------------------------------------
+
+if(VULCAO_BUILD_SAMPLES)
+    add_subdirectory(samples)
 endif()
 
 # --- tests -------------------------------------------------------------------

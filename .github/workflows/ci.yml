@@ -30,7 +30,7 @@ jobs:
         run: test -f /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
 
       - name: Configure
-        run: cmake -S . -B build -DVULCAO_BUILD_SANDBOX=OFF -DVULCAO_BUILD_TESTS=ON
+        run: cmake -S . -B build -DVULCAO_BUILD_SAMPLES=OFF -DVULCAO_BUILD_TESTS=ON
 
       - name: Build
         run: cmake --build build --config Release

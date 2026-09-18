@@ -3,7 +3,7 @@ name: ci
 # Forgejo Actions (Codeberg). Mirrors .github/workflows/ci.yml, but:
 # - Windows is not covered here.
 # - The Vulkan SDK is installed from apt instead of jurplel/install-vulkan-sdk,
-#   which is not mirrored on code.forgejo.org. The sandbox is disabled, so no
+#   which is not mirrored on code.forgejo.org. Samples are disabled, so no
 #   shader compiler is needed; only the loader and headers.
 # - Tests run against lavapipe (software Vulkan) so the device paths execute
 #   and the validation layers are exercised.
@@ -33,7 +33,7 @@ jobs:
         run: test -f /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
 
       - name: Configure
-        run: cmake -S . -B build -DVULCAO_BUILD_SANDBOX=OFF -DVULCAO_BUILD_TESTS=ON
+        run: cmake -S . -B build -DVULCAO_BUILD_SAMPLES=OFF -DVULCAO_BUILD_TESTS=ON
 
       - name: Build
         run: cmake --build build --config Release
