@@ -39,6 +39,9 @@ public:
                                  vk::ArrayProxy<const vk::PushConstantRange> push_constants = {});
 
     /// @brief Creates a pipeline layout by merging the reflection data of several stages.
+    ///
+    /// The set layouts are indexed by set number: sets the shaders skip are
+    /// filled with empty layouts so set N always maps to the shaders' set N.
     /// @param device Device that creates the layout.
     /// @param reflections Reflection data of the stages.
     /// @return The created pipeline layout, owning the merged set layouts.
@@ -46,6 +49,9 @@ public:
                                                  std::span<const ShaderReflection> reflections);
 
     /// @brief Creates a pipeline layout using descriptor set layouts from a cache.
+    ///
+    /// The set layouts are indexed by set number: sets the shaders skip are
+    /// filled with empty layouts so set N always maps to the shaders' set N.
     /// @param device Device that creates the layout.
     /// @param cache Cache that owns the descriptor set layouts; it must outlive the pipeline layout.
     /// @param reflections Reflection data of the stages.
@@ -64,13 +70,15 @@ public:
     vk::PipelineLayout handle() const { return layout_; }
 
     /// @brief Returns the set layouts owned by this object, if created from reflection.
+    ///
+    /// Indexed by set number; includes the empty layouts created for skipped sets.
     const std::vector<DescriptorSetLayout>& set_layouts() const { return owned_set_layouts_; }
 
-    /// @brief Returns the descriptor set layout handle at an index.
+    /// @brief Returns the descriptor set layout handle of a set number.
     /// @param set Descriptor set index.
     vk::DescriptorSetLayout set_layout(uint32_t set) const { return set_layout_handles_.at(set); }
 
-    /// @brief Returns the number of descriptor set layouts.
+    /// @brief Returns the number of descriptor set layouts, including empty gap layouts.
     size_t set_count() const { return set_layout_handles_.size(); }
 
     /// @brief Destroys the layout and resets the wrapper.

@@ -1,9 +1,36 @@
 #include "vulcao/pipeline_layout.h"
 
+#include <algorithm>
 #include <utility>
 #include <vector>
 
 namespace vulcao {
+namespace {
+
+/// @brief Returns one bindings vector per set number, with empty vectors for
+///        the sets the shaders do not use.
+///
+/// vk::PipelineLayoutCreateInfo::pSetLayouts is indexed by set number, so a
+/// pipeline whose shaders skip a set still needs a (empty) layout at that
+/// position.
+std::vector<const std::vector<vk::DescriptorSetLayoutBinding>*> bindings_by_set(
+    const PipelineReflection& merged) {
+    uint32_t max_set = 0;
+    for (const DescriptorSetLayoutInfo& set : merged.sets)
+        max_set = std::max(max_set, set.set);
+
+    static const std::vector<vk::DescriptorSetLayoutBinding> empty;
+    std::vector<const std::vector<vk::DescriptorSetLayoutBinding>*> result;
+    if (merged.sets.empty())
+        return result;
+
+    result.assign(max_set + 1, &empty);
+    for (const DescriptorSetLayoutInfo& set : merged.sets)
+        result[set.set] = &set.bindings;
+    return result;
+}
+
+}
 
 PipelineLayout::~PipelineLayout() {
     destroy();
@@ -44,11 +71,13 @@ PipelineLayout PipelineLayout::create(vk::Device device,
 PipelineLayout PipelineLayout::create_from_reflection(vk::Device device,
                                                       std::span<const ShaderReflection> reflections) {
     const PipelineReflection merged = merge_reflections(reflections);
+    const std::vector<const std::vector<vk::DescriptorSetLayoutBinding>*> by_set =
+        bindings_by_set(merged);
 
     std::vector<DescriptorSetLayout> set_layouts;
-    set_layouts.reserve(merged.sets.size());
-    for (const DescriptorSetLayoutInfo& set : merged.sets)
-        set_layouts.push_back(DescriptorSetLayout::create(device, set.bindings));
+    set_layouts.reserve(by_set.size());
+    for (const std::vector<vk::DescriptorSetLayoutBinding>* bindings : by_set)
+        set_layouts.push_back(DescriptorSetLayout::create(device, *bindings));
 
     std::vector<vk::DescriptorSetLayout> raw_layouts;
     raw_layouts.reserve(set_layouts.size());
@@ -64,11 +93,13 @@ PipelineLayout PipelineLayout::create_from_reflection(vk::Device device,
                                                       DescriptorSetLayoutCache& cache,
                                                       std::span<const ShaderReflection> reflections) {
     const PipelineReflection merged = merge_reflections(reflections);
+    const std::vector<const std::vector<vk::DescriptorSetLayoutBinding>*> by_set =
+        bindings_by_set(merged);
 
     std::vector<vk::DescriptorSetLayout> raw_layouts;
-    raw_layouts.reserve(merged.sets.size());
-    for (const DescriptorSetLayoutInfo& set : merged.sets)
-        raw_layouts.push_back(cache.get(set.bindings));
+    raw_layouts.reserve(by_set.size());
+    for (const std::vector<vk::DescriptorSetLayoutBinding>* bindings : by_set)
+        raw_layouts.push_back(cache.get(*bindings));
 
     return create(device, raw_layouts, merged.push_constants);
 }

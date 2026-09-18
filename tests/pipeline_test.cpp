@@ -225,6 +225,61 @@ TEST_CASE("pipeline layout merges reflections and tracks owned set layouts") {
     CHECK_THROWS_AS(owning.set_layout(4), std::out_of_range);
 }
 
+TEST_CASE("pipeline layout from reflection fills gaps between used sets") {
+    VULCAO_REQUIRE_DEVICE();
+
+    const vulcao::test::LogLevelGuard log_level_guard;
+    vulcao::set_log_level(vulcao::LogLevel::warning);
+
+    vulcao::ContextInfo info;
+    info.headless = true;
+    info.validation = true;
+
+    vulcao::Context context{info};
+    context.initialize();
+
+    // A stage that only uses set 2: set 0 and set 1 must be filled with empty
+    // layouts so vk::PipelineLayoutCreateInfo indexes layouts by set number.
+    vulcao::ShaderReflection reflection;
+    reflection.stage = vk::ShaderStageFlagBits::eCompute;
+    reflection.sets.push_back(vulcao::DescriptorSetLayoutInfo{
+        .set = 2,
+        .bindings = {vk::DescriptorSetLayoutBinding{
+            .binding = 0,
+            .descriptorType = vk::DescriptorType::eStorageBuffer,
+            .descriptorCount = 1,
+            .stageFlags = vk::ShaderStageFlagBits::eCompute,
+        }},
+    });
+
+    const vulcao::PipelineLayout layout = vulcao::PipelineLayout::create_from_reflection(
+        context.device(), std::span(&reflection, 1));
+    REQUIRE(layout.valid());
+    CHECK(layout.set_count() == 3);
+    CHECK(layout.set_layouts().size() == 3);
+    for (uint32_t set = 0; set < 3; ++set)
+        CHECK(layout.set_layout(set) != VK_NULL_HANDLE);
+    CHECK_THROWS_AS(layout.set_layout(3), std::out_of_range);
+
+    // The gap layouts are empty and therefore interchangeable: allocating a
+    // set from the shader's set 2 layout must carry the storage buffer binding.
+    vulcao::DescriptorPool pool = vulcao::DescriptorPool::create(
+        context.device(),
+        vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, 1},
+        1);
+    const vulcao::DescriptorSet descriptor_set = pool.allocate(layout.set_layout(2));
+    CHECK(descriptor_set.valid());
+
+    // Cached variant goes through the same gap filling.
+    vulcao::DescriptorSetLayoutCache cache{context.device()};
+    const vulcao::PipelineLayout cached =
+        vulcao::PipelineLayout::create_from_reflection(context.device(), cache,
+                                                       std::span(&reflection, 1));
+    REQUIRE(cached.valid());
+    CHECK(cached.set_count() == 3);
+    CHECK(cached.set_layout(2) != VK_NULL_HANDLE);
+}
+
 TEST_CASE("compute pipelines build from reflected layouts, with and without a cache") {
     VULCAO_REQUIRE_DEVICE();
 
