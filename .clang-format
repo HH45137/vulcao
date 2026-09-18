@@ -1,0 +1,39 @@
+---
+# Style of the vulcao sources. The tree is not fully clang-format clean yet, so a
+# whole tree `clang-format -i` still produces a large diff; land it as its own commit.
+Language: Cpp
+BasedOnStyle: LLVM
+Standard: c++20
+
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+AccessModifierOffset: -4
+ContinuationIndentWidth: 4
+ConstructorInitializerIndentWidth: 4
+BreakConstructorInitializers: BeforeColon
+
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: true
+AlwaysBreakTemplateDeclarations: Yes
+IndentCaseLabels: true
+ReflowComments: false
+
+DerivePointerAlignment: false
+PointerAlignment: Left
+SpaceAfterTemplateKeyword: true
+SpaceBeforeParens: ControlStatements
+
+NamespaceIndentation: None
+FixNamespaceComments: false
+
+AlignAfterOpenBracket: Align
+BinPackArguments: true
+BinPackParameters: false
+AllowAllParametersOfDeclarationOnNextLine: false
+SortIncludes: Never
+IncludeBlocks: Preserve

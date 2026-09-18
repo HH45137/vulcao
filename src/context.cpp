@@ -425,7 +425,9 @@ void Context::submit_and_wait(vk::CommandBuffer cmd) {
     submit_fence_.reset();
     submit(cmd, submit_fence_.handle());
     submit_fence_.wait();
-}void Context::submit(const vk::SubmitInfo& info, vk::Fence fence) {
+}
+
+void Context::submit(const vk::SubmitInfo& info, vk::Fence fence) {
     submit(graphics_queue_, info, fence);
 }
 
