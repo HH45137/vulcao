@@ -77,8 +77,9 @@ Frame FrameManager::begin_frame() {
                                  vk::to_string(acquired.result));
     image_index = acquired.value;
 
+    // No eOneTimeSubmit: this buffer is re-recorded every frame.
     slot.command_buffer.reset();
-    slot.command_buffer.begin();
+    slot.command_buffer.begin(vk::CommandBufferUsageFlags{});
 
     Frame frame;
     frame.slot = next_slot_;
