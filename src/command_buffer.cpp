@@ -3,6 +3,7 @@
 #include "vulcao/barrier.h"
 #include "vulcao/buffer.h"
 #include "vulcao/image.h"
+#include "vulcao/pipeline.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -514,6 +515,20 @@ CommandBuffer& CommandBuffer::clear_depth_stencil_image(const Image& image,
                                      image.subresource_range());
 }
 
+CommandBuffer& CommandBuffer::transition_to_render(vk::Image image) {
+    const vk::ImageSubresourceRange range{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+    // The source stage matches FrameManager::acquire_wait_stage so the barrier
+    // of a frame begun through a FrameManager is ordered after the acquire.
+    return transition(image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal,
+                      range, vk::PipelineStageFlagBits2::eColorAttachmentOutput);
+}
+
+CommandBuffer& CommandBuffer::transition_to_present(vk::Image image) {
+    const vk::ImageSubresourceRange range{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+    return transition(image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR,
+                      range);
+}
+
 CommandBuffer& CommandBuffer::execute_commands(vk::CommandBuffer cmd) {
     cmd_.executeCommands(cmd);
     return *this;
@@ -544,6 +559,10 @@ CommandBuffer& CommandBuffer::update_buffer(vk::Buffer dst,
 CommandBuffer& CommandBuffer::bind_pipeline(vk::PipelineBindPoint bind_point, vk::Pipeline pipeline) {
     cmd_.bindPipeline(bind_point, pipeline);
     return *this;
+}
+
+CommandBuffer& CommandBuffer::bind_pipeline(const Pipeline& pipeline) {
+    return bind_pipeline(pipeline.bind_point(), pipeline.handle());
 }
 
 CommandBuffer& CommandBuffer::bind_vertex_buffer(uint32_t binding,
@@ -694,6 +713,24 @@ CommandBuffer& CommandBuffer::draw_indexed_indirect(vk::Buffer buffer,
 CommandBuffer& CommandBuffer::begin_rendering(const vk::RenderingInfo& info) {
     cmd_.beginRendering(info);
     return *this;
+}
+
+CommandBuffer& CommandBuffer::begin_rendering(vk::Extent2D extent,
+                                              std::span<const vk::RenderingAttachmentInfo> colors,
+                                              const vk::RenderingAttachmentInfo* depth) {
+    return begin_rendering(vk::RenderingInfo{
+        .renderArea = vk::Rect2D{.offset = vk::Offset2D{0, 0}, .extent = extent},
+        .layerCount = 1,
+        .colorAttachmentCount = static_cast<uint32_t>(colors.size()),
+        .pColorAttachments = colors.data(),
+        .pDepthAttachment = depth,
+    });
+}
+
+CommandBuffer& CommandBuffer::begin_rendering(vk::Extent2D extent,
+                                              const vk::RenderingAttachmentInfo& color,
+                                              const vk::RenderingAttachmentInfo* depth) {
+    return begin_rendering(extent, std::span(&color, 1), depth);
 }
 
 CommandBuffer& CommandBuffer::end_rendering() {

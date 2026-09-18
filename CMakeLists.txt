@@ -47,6 +47,7 @@ add_library(vulcao STATIC
     src/pipeline_layout.cpp
     src/query_pool.cpp
     src/reflection.cpp
+    src/rendering.cpp
     src/sampler.cpp
     src/semaphore.cpp
     src/shader_module.cpp

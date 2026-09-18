@@ -7,6 +7,7 @@ add_executable(vulcao_tests
     log_test.cpp
     pipeline_test.cpp
     reflection_test.cpp
+    rendering_test.cpp
     resource_test.cpp
     specialization_test.cpp
     transfer_test.cpp

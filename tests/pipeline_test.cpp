@@ -324,6 +324,10 @@ TEST_CASE("compute pipelines build from reflected layouts, with and without a ca
                                          "computeMain"),
         std::runtime_error);
 
+    // bind_pipeline(const Pipeline&) picks the pipeline's own bind point.
+    CHECK_NOTHROW(context.immediate(
+        [&](vulcao::CommandBuffer& cmd) { cmd.bind_pipeline(pipeline); }));
+
     CHECK(capture.errors.empty());
 }
 

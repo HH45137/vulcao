@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <ranges>
+#include <span>
 #include <type_traits>
 
 #include <vulkan/vulkan.hpp>
@@ -11,6 +12,7 @@ namespace vulcao {
 
 class Buffer;
 class Image;
+class Pipeline;
 
 /// @brief RAII wrapper around a Vulkan command buffer with recording helpers.
 class CommandBuffer {
@@ -368,6 +370,22 @@ public:
     CommandBuffer& clear_depth_stencil_image(const Image& image,
                                              const vk::ClearDepthStencilValue& depth_stencil);
 
+    /// @brief Transitions a swapchain image to the color attachment layout.
+    ///
+    /// The image is treated as undefined: its previous contents are discarded,
+    /// which is the usual swapchain rendering pattern. The source stage matches
+    /// FrameManager::acquire_wait_stage, so the barrier is ordered after the
+    /// acquire of a frame begun through a FrameManager.
+    /// @param image Acquired swapchain image.
+    /// @return This command buffer.
+    CommandBuffer& transition_to_render(vk::Image image);
+
+    /// @brief Transitions a swapchain image from the color attachment layout to
+    ///        the present layout.
+    /// @param image Swapchain image that was rendered into.
+    /// @return This command buffer.
+    CommandBuffer& transition_to_present(vk::Image image);
+
     /// @brief Executes the recorded commands of a secondary command buffer.
     /// @param cmd Secondary command buffer to execute.
     /// @return This command buffer.
@@ -414,6 +432,11 @@ public:
     /// @param pipeline Pipeline to bind.
     /// @return This command buffer.
     CommandBuffer& bind_pipeline(vk::PipelineBindPoint bind_point, vk::Pipeline pipeline);
+
+    /// @brief Binds a pipeline at its own bind point.
+    /// @param pipeline Pipeline to bind.
+    /// @return This command buffer.
+    CommandBuffer& bind_pipeline(const Pipeline& pipeline);
 
     /// @brief Binds one vertex buffer.
     /// @param binding Vertex binding index.
@@ -596,6 +619,29 @@ public:
     /// @param info Rendering parameters.
     /// @return This command buffer.
     CommandBuffer& begin_rendering(const vk::RenderingInfo& info);
+
+    /// @brief Begins dynamic rendering covering a whole extent with one layer.
+    ///
+    /// Convenience for the common case of rendering into full extent
+    /// attachments; combine with the color_attachment/depth_attachment builders
+    /// in vulcao/rendering.h. Use the vk::RenderingInfo overload for layered
+    /// rendering, view masks or custom render areas.
+    /// @param extent Render area, starting at (0, 0).
+    /// @param colors Color attachments.
+    /// @param depth Optional depth attachment.
+    /// @return This command buffer.
+    CommandBuffer& begin_rendering(vk::Extent2D extent,
+                                   std::span<const vk::RenderingAttachmentInfo> colors,
+                                   const vk::RenderingAttachmentInfo* depth = nullptr);
+
+    /// @brief Begins dynamic rendering with a single color attachment.
+    /// @param extent Render area, starting at (0, 0).
+    /// @param color Color attachment.
+    /// @param depth Optional depth attachment.
+    /// @return This command buffer.
+    CommandBuffer& begin_rendering(vk::Extent2D extent,
+                                   const vk::RenderingAttachmentInfo& color,
+                                   const vk::RenderingAttachmentInfo* depth = nullptr);
 
     /// @brief Ends dynamic rendering.
     /// @return This command buffer.
