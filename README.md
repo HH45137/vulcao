@@ -87,6 +87,26 @@ Run the tests with `ctest --test-dir build`.
 ./build/samples/04_offscreen/offscreen
 ```
 
+## Threading model
+
+vulcao follows the Vulkan rule: objects are cheap to create on any thread, but
+anything that mutates shared state is externally synchronized. Concretely:
+
+- **Safe from multiple threads**: creating and destroying independent
+  `Buffer`/`Image`/`Pipeline`/`Sampler`/descriptor objects (the VMA allocator
+  and the driver handle their own locking), recording into command buffers
+  allocated from *different* `CommandPool`s, and logging through the global
+  log callback.
+- **Single thread only**: `Context::immediate()`, `upload()`/`download()` and
+  `upload_async()` (they share one internal command buffer and the staging
+  bookkeeping), `FrameManager` as a whole, `DescriptorSetLayoutCache`, and any
+  individual `CommandPool` (allocate from separate pools per thread instead).
+- **Queue submission**: `vkQueueSubmit` must not run concurrently on the same
+  queue, so serialize calls to the `Context::submit*` family that target the
+  same queue (different queues are fine).
+- **Image layout tracking** is CPU-side state: the thread that records
+  transitions for an `Image` must be the one that reads `layout()`.
+
 ## Documentation
 
 The API reference is generated with Doxygen from `docs/`:
