@@ -17,11 +17,13 @@ concurrency:
 # need. Without it those cases are compiled out and the suite silently drops the
 # reflection, pipeline layout and pipeline coverage. The Linux jobs install it
 # from the official Slang release (bump SLANG_VERSION to move on); the Windows
-# job uses the copy the Vulkan SDK bundles. MESA_VERSION pins the mesa-dist-win
-# build that provides lavapipe on the GPU-less Windows runners.
+# job expects it in the Vulkan SDK installer. MESA_VERSION pins the mesa-dist-win
+# build that provides lavapipe on the GPU-less Windows runners, and
+# VULKAN_SDK_VERSION pins the Windows installer.
 env:
   SLANG_VERSION: "2026.18"
   MESA_VERSION: "26.2.0"
+  VULKAN_SDK_VERSION: "1.4.357.0"
 
 jobs:
   test:
@@ -32,13 +34,19 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install the loader, lavapipe and the validation layers
+      # The vk-bootstrap submodule needs current (1.4-era) Vulkan headers, and
+      # noble's libvulkan-dev ships 1.3-era ones, so the loader, headers,
+      # validation layers and tools come from LunarG's repository instead of
+      # the distro packages. mesa-vulkan-drivers stays from the distro: it
+      # provides lavapipe, which LunarG does not package.
+      - name: Install the Vulkan SDK and lavapipe
         run: |
+          wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc > /dev/null
+          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build \
-            libvulkan-dev vulkan-tools \
-            mesa-vulkan-drivers vulkan-validationlayers
+            vulkan-sdk mesa-vulkan-drivers
 
       # The hosted runners have no GPU, and the suite fails rather than skips
       # when no device can be created, so the software rasterizer has to be
@@ -115,13 +123,14 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install the loader, lavapipe, the validation layers and the windowing dependencies
+      - name: Install the Vulkan SDK, lavapipe and the windowing dependencies
         run: |
+          wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc > /dev/null
+          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build \
-            libvulkan-dev vulkan-tools \
-            mesa-vulkan-drivers vulkan-validationlayers \
+            vulkan-sdk mesa-vulkan-drivers \
             libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
             libgl1-mesa-dev libwayland-dev libxkbcommon-dev
 
@@ -189,13 +198,51 @@ jobs:
         with:
           submodules: recursive
 
-      # The full prebuilt SDK provides the loader, the headers, the validation
-      # layers and a bundled slangc from one source.
-      - name: Install the Vulkan SDK
-        uses: humbletim/install-vulkan-sdk@v1.2
+      # The official installer is the only package that carries the headers,
+      # the import libraries, the validation layers and the tools together.
+      # The zip the setup-vulkan-sdk action unpacks is Bin-only - no Include,
+      # no Lib - which FindVulkan rejects. The installer is over a gigabyte,
+      # so it is cached by version.
+      - name: Cache the Vulkan SDK installer
+        uses: actions/cache@v5
         with:
-          version: latest
-          cache: true
+          path: VulkanSDK-*.exe
+          key: vulkan-sdk-installer-${{ env.VULKAN_SDK_VERSION }}-windows
+
+      - name: Install the Vulkan SDK
+        shell: bash
+        run: |
+          if ! ls VulkanSDK-*.exe > /dev/null 2>&1; then
+            curl -sSL --retry 3 -o "VulkanSDK-${VULKAN_SDK_VERSION}-Installer.exe" \
+              "https://sdk.lunarg.com/sdk/download/${VULKAN_SDK_VERSION}/windows/VulkanSDK-${VULKAN_SDK_VERSION}-Installer.exe"
+          fi
+          ./VulkanSDK-${VULKAN_SDK_VERSION}-Installer.exe --accept-licenses --default --root "$PWD/VULKAN_SDK" /S
+          lib="$(find "$PWD/VULKAN_SDK" -name vulkan-1.lib -print -quit)"
+          if [ -z "$lib" ]; then
+            echo "installer produced no vulkan-1.lib under $PWD/VULKAN_SDK" >&2
+            find "$PWD/VULKAN_SDK" -maxdepth 3 >&2 || true
+            exit 1
+          fi
+          # The SDK root is where vulkan-1.lib's Lib/ and its sibling Include/
+          # and Bin/ live, wherever the installer nested them.
+          sdk="$(cd "$(dirname "$(dirname "$lib")")" && pwd -W)"
+          echo "VULKAN_SDK=$(cygpath -m "$sdk")" >> "$GITHUB_ENV"
+          echo "$(cygpath -m "$sdk/Bin")" >> "$GITHUB_PATH"
+          echo "sdk at $sdk"
+
+      # The SDK ships slangc; fall back to the Slang release if a future
+      # installer drops it. PATH exports apply from the next step on.
+      - name: Ensure slangc
+        shell: bash
+        run: |
+          if ! command -v slangc > /dev/null 2>&1; then
+            echo "slangc not in the SDK; falling back to the Slang release" >&2
+            curl -sSL --retry 3 -o slang.zip \
+              "https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-windows-x86_64.zip"
+            tar -xf slang.zip -C "$HOME/slang"
+            slangc="$(find "$HOME/slang" -name slangc.exe -print -quit)"
+            echo "$(cygpath -m "$(dirname "$slangc")")" >> "$GITHUB_PATH"
+          fi
 
       # The runners have no GPU and the SDK zip carries neither SwiftShader nor
       # registry entries, so the device comes from mesa-dist-win's lavapipe
@@ -233,14 +280,6 @@ jobs:
           } >> "$GITHUB_ENV"
           echo "using icd: $icd"
           echo "using layers: $layers"
-
-      # The SDK bundles slangc (an older release than SLANG_VERSION, which is
-      # fine for the sample shaders) and install-vulkan-sdk puts Bin on PATH.
-      - name: Check slangc
-        shell: bash
-        run: |
-          slangc="$(command -v slangc)" || { echo "slangc not on PATH; the SDK layout changed" >&2; exit 1; }
-          "$slangc" --version 2>/dev/null || "$slangc" -h >/dev/null 2>&1 || true
 
       - name: Report the device the tests will use
         shell: bash
