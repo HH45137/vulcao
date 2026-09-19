@@ -15,10 +15,13 @@ concurrency:
 
 # slangc compiles the shaders the samples and the shader-dependent test cases
 # need. Without it those cases are compiled out and the suite silently drops the
-# reflection, pipeline layout and pipeline coverage, so every job installs it
-# from the official Slang release. Bump SLANG_VERSION to move on.
+# reflection, pipeline layout and pipeline coverage. The Linux jobs install it
+# from the official Slang release (bump SLANG_VERSION to move on); the Windows
+# job uses the copy the Vulkan SDK bundles. MESA_VERSION pins the mesa-dist-win
+# build that provides lavapipe on the GPU-less Windows runners.
 env:
   SLANG_VERSION: "2026.18"
+  MESA_VERSION: "26.2.0"
 
 jobs:
   test:
@@ -82,7 +85,8 @@ jobs:
           fi
           chmod +x "$slangc"
           echo "$(dirname "$slangc")" >> "$GITHUB_PATH"
-          "$slangc" --version
+          # 2026.18 dropped --version; -h still exercises the binary.
+          "$slangc" --version 2>/dev/null || "$slangc" -h >/dev/null 2>&1 || true
 
       - name: Report the device the tests will use
         run: |
@@ -157,7 +161,8 @@ jobs:
           fi
           chmod +x "$slangc"
           echo "$(dirname "$slangc")" >> "$GITHUB_PATH"
-          "$slangc" --version
+          # 2026.18 dropped --version; -h still exercises the binary.
+          "$slangc" --version 2>/dev/null || "$slangc" -h >/dev/null 2>&1 || true
 
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DVULCAO_BUILD_SAMPLES=ON
@@ -185,30 +190,34 @@ jobs:
           submodules: recursive
 
       # The full prebuilt SDK provides the loader, the headers, the validation
-      # layers and SwiftShader from one source; the runners have no GPU, so the
-      # tests run on SwiftShader.
+      # layers and a bundled slangc from one source.
       - name: Install the Vulkan SDK
         uses: humbletim/install-vulkan-sdk@v1.2
         with:
           version: latest
           cache: true
 
-      # The SDK zip is unpacked without the installer, so it carries no
-      # registry entries: the loader finds SwiftShader through
-      # VK_DRIVER_FILES/VK_ICD_FILENAMES and the validation layers through
-      # VK_LAYER_PATH. Both are located by search rather than fixed paths so
-      # layout changes between SDK releases fail loudly with a listing
-      # instead of a confusing "no device" error three steps later.
-      - name: Point the loader at SwiftShader and the layers at the SDK
+      # The runners have no GPU and the SDK zip carries neither SwiftShader nor
+      # registry entries, so the device comes from mesa-dist-win's lavapipe
+      # (the same CPU driver the Linux jobs use) and the loader finds it and
+      # the unpacked validation layers through the explicit env vars. Both are
+      # located by search rather than fixed paths so layout changes between
+      # releases fail loudly with a listing instead of a confusing "no device"
+      # error three steps later.
+      - name: Point the loader at lavapipe and the layers at the SDK
         shell: bash
         run: |
-          sdk="$(cygpath -u "$VULKAN_SDK")"
-          icd="$(find "$sdk" -name 'vk_swiftshader.json' -print 2>/dev/null | head -n1)"
-          if [ -z "$icd" ]; then
-            echo "no SwiftShader ICD under $VULKAN_SDK" >&2
-            find "$sdk" -maxdepth 2 >&2 || true
+          set -e
+          curl -sSL --retry 3 -o mesa.7z \
+            "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z"
+          7z x -y -omesa mesa.7z > /dev/null
+          icd="$(find mesa -name 'lvp_icd*.json' -path '*x64*' -print 2>/dev/null | head -n1)"
+          if [ -z "$icd" ] || [ ! -f "$(dirname "$icd")/vulkan_lvp.dll" ]; then
+            echo "no x64 lavapipe ICD next to vulkan_lvp.dll in the mesa package" >&2
+            find mesa -name '*lvp*' >&2 || true
             exit 1
           fi
+          sdk="$(cygpath -u "$VULKAN_SDK")"
           layers="$(find "$sdk" -name 'VkLayer_khronos_validation.json' -print 2>/dev/null | head -n1)"
           if [ -z "$layers" ]; then
             echo "no validation layer manifest under $VULKAN_SDK" >&2
@@ -216,39 +225,22 @@ jobs:
             exit 1
           fi
           {
-            echo "VK_DRIVER_FILES=$(cygpath -m "$icd")"
-            echo "VK_ICD_FILENAMES=$(cygpath -m "$icd")"
+            # The ICD references vulkan_lvp.dll relatively, which the loader
+            # resolves next to the manifest.
+            echo "VK_DRIVER_FILES=$(cygpath -m "$PWD/$icd")"
+            echo "VK_ICD_FILENAMES=$(cygpath -m "$PWD/$icd")"
             echo "VK_LAYER_PATH=$(cygpath -m "$(dirname "$layers")")"
           } >> "$GITHUB_ENV"
           echo "using icd: $icd"
           echo "using layers: $layers"
 
-      - name: Cache slangc
-        uses: actions/cache@v5
-        with:
-          path: ~/slang
-          key: slang-${{ env.SLANG_VERSION }}-windows-x86_64
-
-      - name: Install slangc
+      # The SDK bundles slangc (an older release than SLANG_VERSION, which is
+      # fine for the sample shaders) and install-vulkan-sdk puts Bin on PATH.
+      - name: Check slangc
         shell: bash
         run: |
-          url="https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-windows-x86_64.zip"
-          slangc="$(find "$HOME/slang" -type f -name slangc.exe -print -quit 2>/dev/null || true)"
-          if [ -z "$slangc" ]; then
-            mkdir -p "$HOME/slang"
-            curl -sSL --retry 3 -o slang.zip "$url"
-            # bsdtar (tar.exe on the runner) unpacks zip files; unzip is not
-            # part of the image.
-            tar -xf slang.zip -C "$HOME/slang"
-            slangc="$(find "$HOME/slang" -type f -name slangc.exe -print -quit)"
-          fi
-          if [ -z "$slangc" ]; then
-            echo "slangc missing after extracting $url" >&2
-            exit 1
-          fi
-          # GITHUB_PATH is read by the runner, so it needs the Windows form.
-          echo "$(cygpath -m "$(dirname "$slangc")")" >> "$GITHUB_PATH"
-          "$(cygpath -m "$slangc")" --version
+          slangc="$(command -v slangc)" || { echo "slangc not on PATH; the SDK layout changed" >&2; exit 1; }
+          "$slangc" --version 2>/dev/null || "$slangc" -h >/dev/null 2>&1 || true
 
       - name: Report the device the tests will use
         shell: bash
