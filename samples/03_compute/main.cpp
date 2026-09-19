@@ -74,11 +74,9 @@ int main() {
         const vk::DeviceSize bytes = static_cast<vk::DeviceSize>(values.size()) * sizeof(uint32_t);
 
         // TransferSrc is what lets the dispatch result be copied back out.
-        vulcao::Buffer storage = vulcao::Buffer::create(
-            context.allocator(), bytes,
-            vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc |
-                vk::BufferUsageFlagBits::eTransferDst);
-        context.upload(storage, values);
+        vulcao::Buffer storage = vulcao::Buffer::create_with_data(
+            context, values,
+            vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc);
 
         const vulcao::DescriptorSet set = pool.allocate(set_layout);
         set.write_storage_buffer(0, storage);
@@ -98,7 +96,7 @@ int main() {
                                vk::PipelineStageFlagBits2::eComputeShader,
                                vk::AccessFlagBits2::eShaderStorageRead);
 
-            cmd.bind_pipeline(vk::PipelineBindPoint::eCompute, pipeline.handle());
+            cmd.bind_pipeline(pipeline);
             cmd.bind_descriptor_sets(vk::PipelineBindPoint::eCompute, pipeline_layout.handle(),
                                      set.handle());
             cmd.dispatch(element_count / workgroup_size);

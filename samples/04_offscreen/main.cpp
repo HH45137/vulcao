@@ -14,6 +14,7 @@
 #include "vulcao/log.h"
 #include "vulcao/pipeline.h"
 #include "vulcao/pipeline_layout.h"
+#include "vulcao/rendering.h"
 #include "vulcao/shader_module.h"
 #include "vulcao/vertex_layout.h"
 
@@ -93,10 +94,8 @@ int main() {
         const vulcao::VertexLayout vertex_layout =
             vulcao::make_vertex_layout<Vertex>(vertex.reflection(), {offsetof(Vertex, position)});
 
-        vulcao::Buffer vertices = vulcao::Buffer::create(
-            context.allocator(), sizeof(triangle),
-            vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst);
-        context.upload(vertices, triangle);
+        vulcao::Buffer vertices = vulcao::Buffer::create_with_data(
+            context, triangle, vk::BufferUsageFlagBits::eVertexBuffer);
 
         // The render target. Sampled is what makes it usable as a texture once the
         // pass is done, and TransferSrc is what lets the sample read it back.
@@ -129,30 +128,15 @@ int main() {
             context.allocator(), bytes, vk::BufferUsageFlagBits::eTransferDst,
             VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
 
-        vk::ClearValue clear{};
-        for (size_t channel = 0; channel < clear_color.size(); ++channel)
-            clear.color.float32[channel] = clear_color[channel];
-
-        const vk::RenderingAttachmentInfo color_attachment{
-            .imageView = target.view(),
-            .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-            .loadOp = vk::AttachmentLoadOp::eClear,
-            .storeOp = vk::AttachmentStoreOp::eStore,
-            .clearValue = clear,
-        };
-        const vk::RenderingInfo rendering_info{
-            .renderArea = vk::Rect2D{.offset = vk::Offset2D{0, 0}, .extent = vk::Extent2D{size, size}},
-            .layerCount = 1,
-            .colorAttachmentCount = 1,
-            .pColorAttachments = &color_attachment,
-        };
-
         // One submission: render into the image, copy it out, then leave it in the
         // layout a sampler expects.
         context.immediate([&](vulcao::CommandBuffer& cmd) {
             cmd.transition(target, vk::ImageLayout::eColorAttachmentOptimal);
-            cmd.begin_rendering(rendering_info);
-            cmd.bind_pipeline(vk::PipelineBindPoint::eGraphics, pipeline.handle());
+            cmd.begin_rendering(
+                vk::Extent2D{size, size},
+                vulcao::color_attachment(target.view(), target.layout(),
+                                         vk::ClearColorValue{clear_color}));
+            cmd.bind_pipeline(pipeline);
             cmd.set_viewport(vk::Extent2D{size, size});
             cmd.set_scissor(vk::Extent2D{size, size});
             cmd.push_constants(pipeline_layout.handle(), vk::ShaderStageFlagBits::eFragment, 0,

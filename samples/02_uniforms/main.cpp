@@ -19,6 +19,7 @@
 #include "vulcao/log.h"
 #include "vulcao/pipeline.h"
 #include "vulcao/pipeline_layout.h"
+#include "vulcao/rendering.h"
 #include "vulcao/shader_module.h"
 #include "vulcao/vertex_layout.h"
 
@@ -65,15 +66,10 @@ int main() {
         const vulcao::ShaderModule fragment = vulcao::ShaderModule::create_from_file(
             context.device(), vk::ShaderStageFlagBits::eFragment, shader_path("uniforms.frag.spv"));
 
-        vulcao::Buffer vertex_buffer = vulcao::Buffer::create(
-            context.allocator(), triangle_vertices.size() * sizeof(Vertex),
-            vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst);
-        context.upload(vertex_buffer, triangle_vertices);
-
-        vulcao::Buffer index_buffer = vulcao::Buffer::create(
-            context.allocator(), triangle_indices.size() * sizeof(uint16_t),
-            vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst);
-        context.upload(index_buffer, triangle_indices);
+        vulcao::Buffer vertex_buffer = vulcao::Buffer::create_with_data(
+            context, triangle_vertices, vk::BufferUsageFlagBits::eVertexBuffer);
+        vulcao::Buffer index_buffer = vulcao::Buffer::create_with_data(
+            context, triangle_indices, vk::BufferUsageFlagBits::eIndexBuffer);
 
         const vulcao::VertexLayout vertex_layout = vulcao::make_vertex_layout<Vertex>(
             vertex.reflection(),
@@ -119,14 +115,6 @@ int main() {
             descriptor_sets.push_back(set);
         }
 
-        const vk::ImageSubresourceRange range{
-            .aspectMask = vk::ImageAspectFlagBits::eColor,
-            .baseMipLevel = 0,
-            .levelCount = 1,
-            .baseArrayLayer = 0,
-            .layerCount = 1,
-        };
-
         const double start_time = glfwGetTime();
 
         auto render = [&](double time_seconds) {
@@ -142,31 +130,13 @@ int main() {
             const vk::ImageView view = context.swapchain_image_views()[frame.image_index];
             const vk::Extent2D extent = context.swapchain_extent();
 
-            vk::ClearValue clear{};
-            clear.color.float32[0] = 0.05f;
-            clear.color.float32[1] = 0.10f;
-            clear.color.float32[2] = 0.20f;
-            clear.color.float32[3] = 1.0f;
-
-            const vk::RenderingAttachmentInfo color_attachment{
-                .imageView = view,
-                .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                .loadOp = vk::AttachmentLoadOp::eClear,
-                .storeOp = vk::AttachmentStoreOp::eStore,
-                .clearValue = clear,
-            };
-            const vk::RenderingInfo rendering_info{
-                .renderArea = vk::Rect2D{.offset = vk::Offset2D{0, 0}, .extent = extent},
-                .layerCount = 1,
-                .colorAttachmentCount = 1,
-                .pColorAttachments = &color_attachment,
-            };
-
-            cmd.transition(image, vk::ImageLayout::eUndefined,
-                           vk::ImageLayout::eColorAttachmentOptimal, range,
-                           vulcao::FrameManager::acquire_wait_stage);
-            cmd.begin_rendering(rendering_info);
-            cmd.bind_pipeline(vk::PipelineBindPoint::eGraphics, pipeline.handle());
+            cmd.transition_to_render(image);
+            cmd.begin_rendering(
+                extent,
+                vulcao::color_attachment(view, vk::ImageLayout::eColorAttachmentOptimal,
+                                         vk::ClearColorValue{
+                                             std::array<float, 4>{0.05f, 0.10f, 0.20f, 1.0f}}));
+            cmd.bind_pipeline(pipeline);
             cmd.bind_descriptor_sets(vk::PipelineBindPoint::eGraphics, layout.handle(),
                                      descriptor_sets[slot].handle());
             cmd.set_viewport(extent);
@@ -175,8 +145,7 @@ int main() {
             cmd.bind_index_buffer(index_buffer, 0, vk::IndexType::eUint16);
             cmd.draw_indexed(static_cast<uint32_t>(triangle_indices.size()));
             cmd.end_rendering();
-            cmd.transition(image, vk::ImageLayout::eColorAttachmentOptimal,
-                           vk::ImageLayout::ePresentSrcKHR, range);
+            cmd.transition_to_present(image);
 
             frames.end_frame(frame);
             return frames.present(frame);
