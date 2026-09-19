@@ -19,6 +19,7 @@ Buffer::Buffer(Buffer&& other) noexcept
       info_(std::exchange(other.info_, VmaAllocationInfo{})),
       size_(std::exchange(other.size_, 0)),
       usage_(std::exchange(other.usage_, vk::BufferUsageFlags{})),
+      sharing_mode_(std::exchange(other.sharing_mode_, vk::SharingMode::eExclusive)),
       mapped_data_(std::exchange(other.mapped_data_, nullptr)),
       mapped_(std::exchange(other.mapped_, false)),
       host_visible_(std::exchange(other.host_visible_, false)) {}
@@ -32,6 +33,7 @@ Buffer& Buffer::operator=(Buffer&& other) noexcept {
         info_ = std::exchange(other.info_, VmaAllocationInfo{});
         size_ = std::exchange(other.size_, 0);
         usage_ = std::exchange(other.usage_, vk::BufferUsageFlags{});
+        sharing_mode_ = std::exchange(other.sharing_mode_, vk::SharingMode::eExclusive);
         mapped_data_ = std::exchange(other.mapped_data_, nullptr);
         mapped_ = std::exchange(other.mapped_, false);
         host_visible_ = std::exchange(other.host_visible_, false);
@@ -43,17 +45,21 @@ Buffer Buffer::create(Allocator& allocator,
                       vk::DeviceSize size,
                       vk::BufferUsageFlags usage,
                       VmaMemoryUsage memory_usage,
-                      VmaAllocationCreateFlags flags) {
+                      VmaAllocationCreateFlags flags,
+                      vk::ArrayProxy<const uint32_t> concurrent_families) {
     if (!allocator.valid())
         throw std::runtime_error("Buffer::create: invalid allocator");
 
     Buffer buffer;
     buffer.allocator_ = allocator.handle();
 
+    const bool concurrent = concurrent_families.size() >= 2;
     const vk::BufferCreateInfo create_info{
         .size = size,
         .usage = usage,
-        .sharingMode = vk::SharingMode::eExclusive,
+        .sharingMode = concurrent ? vk::SharingMode::eConcurrent : vk::SharingMode::eExclusive,
+        .queueFamilyIndexCount = concurrent ? static_cast<uint32_t>(concurrent_families.size()) : 0u,
+        .pQueueFamilyIndices = concurrent ? concurrent_families.data() : nullptr,
     };
 
     VmaAllocationCreateInfo allocation_info{};
@@ -66,6 +72,7 @@ Buffer Buffer::create(Allocator& allocator,
           "create buffer");
     buffer.size_ = size;
     buffer.usage_ = usage;
+    buffer.sharing_mode_ = create_info.sharingMode;
 
     VkMemoryPropertyFlags memory_flags = 0;
     vmaGetMemoryTypeProperties(buffer.allocator_, buffer.info_.memoryType, &memory_flags);
@@ -141,6 +148,7 @@ void Buffer::destroy() {
     info_ = {};
     size_ = 0;
     usage_ = {};
+    sharing_mode_ = vk::SharingMode::eExclusive;
     mapped_data_ = nullptr;
     mapped_ = false;
     host_visible_ = false;

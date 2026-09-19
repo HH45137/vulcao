@@ -65,6 +65,7 @@ Image::Image(Image&& other) noexcept
       extent_(std::exchange(other.extent_, vk::Extent3D{})),
       format_(std::exchange(other.format_, vk::Format::eUndefined)),
       usage_(std::exchange(other.usage_, vk::ImageUsageFlags{})),
+      sharing_mode_(std::exchange(other.sharing_mode_, vk::SharingMode::eExclusive)),
       layout_(std::exchange(other.layout_, vk::ImageLayout::eUndefined)),
       range_(std::exchange(other.range_, vk::ImageSubresourceRange{})) {}
 
@@ -79,6 +80,7 @@ Image& Image::operator=(Image&& other) noexcept {
         extent_ = std::exchange(other.extent_, vk::Extent3D{});
         format_ = std::exchange(other.format_, vk::Format::eUndefined);
         usage_ = std::exchange(other.usage_, vk::ImageUsageFlags{});
+        sharing_mode_ = std::exchange(other.sharing_mode_, vk::SharingMode::eExclusive);
         layout_ = std::exchange(other.layout_, vk::ImageLayout::eUndefined);
         range_ = std::exchange(other.range_, vk::ImageSubresourceRange{});
     }
@@ -125,6 +127,7 @@ Image Image::create(Allocator& allocator,
     image.extent_ = image_info.extent;
     image.format_ = image_info.format;
     image.usage_ = image_info.usage;
+    image.sharing_mode_ = image_info.sharingMode;
     image.layout_ = image_info.initialLayout;
     image.range_ = view_info.subresourceRange;
     return image;
@@ -135,19 +138,26 @@ Image Image::create_2d(Allocator& allocator,
                        vk::Format format,
                        vk::ImageUsageFlags usage,
                        uint32_t mip_levels,
-                       vk::SampleCountFlagBits samples) {
-    return create(allocator, vk::ImageCreateInfo{
-                                 .imageType = vk::ImageType::e2D,
-                                 .format = format,
-                                 .extent = vk::Extent3D{extent.width, extent.height, 1},
-                                 .mipLevels = mip_levels,
-                                 .arrayLayers = 1,
-                                 .samples = samples,
-                                 .tiling = vk::ImageTiling::eOptimal,
-                                 .usage = usage,
-                                 .sharingMode = vk::SharingMode::eExclusive,
-                                 .initialLayout = vk::ImageLayout::eUndefined,
-                             });
+                       vk::SampleCountFlagBits samples,
+                       vk::ArrayProxy<const uint32_t> concurrent_families) {
+    const bool concurrent = concurrent_families.size() >= 2;
+    return create(allocator,
+                  vk::ImageCreateInfo{
+                      .imageType = vk::ImageType::e2D,
+                      .format = format,
+                      .extent = vk::Extent3D{extent.width, extent.height, 1},
+                      .mipLevels = mip_levels,
+                      .arrayLayers = 1,
+                      .samples = samples,
+                      .tiling = vk::ImageTiling::eOptimal,
+                      .usage = usage,
+                      .sharingMode = concurrent ? vk::SharingMode::eConcurrent
+                                                : vk::SharingMode::eExclusive,
+                      .queueFamilyIndexCount =
+                          concurrent ? static_cast<uint32_t>(concurrent_families.size()) : 0u,
+                      .pQueueFamilyIndices = concurrent ? concurrent_families.data() : nullptr,
+                      .initialLayout = vk::ImageLayout::eUndefined,
+                  });
 }
 
 Image Image::create_depth(Allocator& allocator, vk::Extent2D extent, vk::Format format) {
@@ -168,6 +178,7 @@ void Image::destroy() {
     extent_ = vk::Extent3D{};
     format_ = vk::Format::eUndefined;
     usage_ = {};
+    sharing_mode_ = vk::SharingMode::eExclusive;
     layout_ = vk::ImageLayout::eUndefined;
     range_ = vk::ImageSubresourceRange{};
 }

@@ -38,13 +38,17 @@ public:
     /// @param usage Buffer usage flags.
     /// @param memory_usage VMA memory usage hint.
     /// @param flags VMA allocation flags.
+    /// @param concurrent_families Queue families that share the buffer; two or
+    ///        more make it concurrent (see Context::transfer_sharing_families
+    ///        for asynchronous transfer uploads), empty keeps it exclusive.
     /// @return The created buffer.
     /// @throws std::runtime_error if the allocator is invalid or the buffer cannot be created.
     static Buffer create(Allocator& allocator,
                          vk::DeviceSize size,
                          vk::BufferUsageFlags usage,
                          VmaMemoryUsage memory_usage = VMA_MEMORY_USAGE_AUTO,
-                         VmaAllocationCreateFlags flags = 0);
+                         VmaAllocationCreateFlags flags = 0,
+                         vk::ArrayProxy<const uint32_t> concurrent_families = {});
 
     /// @brief Creates a buffer and uploads data into it through the context.
     ///
@@ -105,6 +109,9 @@ public:
 
     /// @brief Returns the usage flags the buffer was created with.
     vk::BufferUsageFlags usage() const { return usage_; }
+
+    /// @brief Returns the sharing mode the buffer was created with.
+    vk::SharingMode sharing_mode() const { return sharing_mode_; }
 
     /// @brief Returns the VMA allocation of the buffer.
     VmaAllocation allocation() const { return allocation_; }
@@ -167,6 +174,7 @@ private:
     VmaAllocationInfo info_{};
     vk::DeviceSize size_ = 0;
     vk::BufferUsageFlags usage_;
+    vk::SharingMode sharing_mode_ = vk::SharingMode::eExclusive;
     void* mapped_data_ = nullptr;
     bool mapped_ = false;
     bool host_visible_ = false;

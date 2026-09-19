@@ -63,6 +63,9 @@ public:
     /// @param usage Image usage flags.
     /// @param mip_levels Number of mip levels.
     /// @param samples Sample count.
+    /// @param concurrent_families Queue families that share the image; two or
+    ///        more make it concurrent (see Context::transfer_sharing_families
+    ///        for asynchronous transfer uploads), empty keeps it exclusive.
     /// @return The created image.
     /// @throws std::runtime_error if the allocator is invalid or the image cannot be created.
     static Image create_2d(Allocator& allocator,
@@ -70,7 +73,8 @@ public:
                            vk::Format format,
                            vk::ImageUsageFlags usage,
                            uint32_t mip_levels = 1,
-                           vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1);
+                           vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1,
+                           vk::ArrayProxy<const uint32_t> concurrent_families = {});
 
     /// @brief Creates a depth image with a view.
     /// @param allocator Allocator used for the memory.
@@ -106,6 +110,9 @@ public:
     /// @brief Returns the usage flags the image was created with.
     vk::ImageUsageFlags usage() const { return usage_; }
 
+    /// @brief Returns the sharing mode the image was created with.
+    vk::SharingMode sharing_mode() const { return sharing_mode_; }
+
     /// @brief Returns the tracked current layout of the image.
     vk::ImageLayout layout() const { return layout_; }
 
@@ -132,6 +139,7 @@ private:
     vk::Extent3D extent_{};
     vk::Format format_ = vk::Format::eUndefined;
     vk::ImageUsageFlags usage_;
+    vk::SharingMode sharing_mode_ = vk::SharingMode::eExclusive;
     vk::ImageLayout layout_ = vk::ImageLayout::eUndefined;
     vk::ImageSubresourceRange range_{};
 };
