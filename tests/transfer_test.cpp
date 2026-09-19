@@ -211,11 +211,17 @@ namespace {
 
 /// @brief Context parameters for transfer upload tests: dedicated transfer
 ///        queue when the GPU offers one, timeline semaphores always.
+///
+/// separate_transfer_queue is a hard requirement in the device selector, so
+/// asking for it unconditionally would leave the suite unable to create a device
+/// on a software rasterizer (lavapipe has one graphics|compute|transfer family).
+/// The cases below guard their dedicated-queue-only assertions on
+/// has_transfer_queue(), so both paths are meaningful.
 vulcao::ContextInfo transfer_context_info() {
     vulcao::ContextInfo info;
     info.headless = true;
     info.validation = true;
-    info.separate_transfer_queue = true;
+    info.separate_transfer_queue = vulcao::test::has_dedicated_transfer_queue();
     info.device_features.timeline_semaphore = true;
     return info;
 }

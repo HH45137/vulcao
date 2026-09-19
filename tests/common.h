@@ -87,6 +87,52 @@ inline bool missing_device_allowed() {
 #endif
 }
 
+/// @brief Returns true when a physical device exposes a transfer-only queue family.
+///
+/// ContextInfo::separate_transfer_queue is a hard requirement in the device
+/// selector, so a suite that always sets it cannot run on a software rasterizer:
+/// lavapipe exposes a single graphics|compute|transfer family and selection
+/// would fail before a device is ever created. The transfer cases use this to
+/// ask for a dedicated queue when the machine has one, and to exercise
+/// upload_async's documented graphics-queue fallback when it does not. Either
+/// way a real device is created and the device path runs - nothing is skipped.
+///
+/// Probes with a raw instance rather than through Context: the first instance
+/// built through vk-bootstrap fixes that library's process wide function pointer
+/// cache, so probing through the wrapper would decide the entry points of every
+/// instance the suite builds afterwards.
+inline bool has_dedicated_transfer_queue() {
+    const vk::ApplicationInfo application_info{.apiVersion = VK_API_VERSION_1_0};
+
+    vk::Instance instance;
+    try {
+        instance = vk::createInstance(vk::InstanceCreateInfo{.pApplicationInfo = &application_info});
+    } catch (const std::exception&) {
+        // No instance means no device at all, which VULCAO_REQUIRE_DEVICE already
+        // reports; answering "no dedicated queue" only picks the fallback path.
+        return false;
+    }
+
+    const vk::QueueFlags graphics_or_compute =
+        vk::QueueFlagBits::eGraphics | vk::QueueFlagBits::eCompute;
+
+    bool found = false;
+    for (const vk::PhysicalDevice& device : instance.enumeratePhysicalDevices()) {
+        for (const vk::QueueFamilyProperties& family : device.getQueueFamilyProperties()) {
+            if ((family.queueFlags & vk::QueueFlagBits::eTransfer) &&
+                !(family.queueFlags & graphics_or_compute)) {
+                found = true;
+                break;
+            }
+        }
+        if (found)
+            break;
+    }
+
+    instance.destroy();
+    return found;
+}
+
 /// @brief Abandons the current test case unless a usable device is present.
 ///
 /// Use at the top of a test case that needs Vulkan:
