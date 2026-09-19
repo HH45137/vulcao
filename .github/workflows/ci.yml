@@ -216,7 +216,11 @@ jobs:
             curl -fsSL --retry 3 -o vulkan-sdk.exe \
               "https://sdk.lunarg.com/sdk/download/${VULKAN_SDK_VERSION}/windows/vulkan-sdk.exe"
           fi
-          ./vulkan-sdk.exe --accept-licenses --default --root "$PWD/VULKAN_SDK" /S
+          # Qt Installer Framework CLI mode: --confirm-command switches it out
+          # of GUI mode, --default-answer takes the defaults (there is no
+          # --default, which the installer rejects).
+          ./vulkan-sdk.exe --root "$PWD/VULKAN_SDK" --accept-licenses \
+            --default-answer --confirm-command
           lib="$(find "$PWD/VULKAN_SDK" -name vulkan-1.lib -print -quit)"
           if [ -z "$lib" ]; then
             echo "installer produced no vulkan-1.lib under $PWD/VULKAN_SDK" >&2
