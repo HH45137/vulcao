@@ -97,10 +97,11 @@ struct SwapchainInfo {
 ///       copy through that one staging buffer synchronously, so the host bytes are
 ///       complete when the call returns and the buffer carries no state into the
 ///       next call. It does keep its peak capacity: the buffer never shrinks.
-/// @note upload_async() shares its own internal command buffer and staging
-///       bookkeeping across calls and is likewise not thread safe, but gives each
-///       call a private staging buffer that it releases once the transfer timeline
-///       passes it.
+/// @note upload_async() is likewise not thread safe: the transfer pool, the
+///       transfer timeline and the pending upload bookkeeping are shared across
+///       calls. Each call does get its own staging buffer and its own command
+///       buffer, so @p data only has to stay valid until the call returns and
+///       neither is reused while a previous submission is still pending.
 class Context {
 public:
     /// @brief Creates the instance.
@@ -370,8 +371,8 @@ public:
     /// only has to stay valid until this call returns, not until the upload lands.
     /// The staging buffer is released once the timeline passes its value.
     ///
-    /// Not thread safe: shares an internal command buffer and staging
-    /// bookkeeping with the other upload_async calls.
+    /// Not thread safe: shares the transfer pool, the timeline and the pending
+    /// upload bookkeeping with the other upload_async calls.
     /// @param dst Destination buffer, must have TransferDst usage.
     /// @param data Source pointer.
     /// @param size Number of bytes to upload.
@@ -403,6 +404,11 @@ public:
     /// the returned value (see the submit overload taking a wait semaphore);
     /// with a dedicated transfer queue the image must additionally be created
     /// with eConcurrent sharing, see transfer_sharing_families().
+    ///
+    /// @note On a dedicated transfer queue the layout transitions name transfer
+    ///       stages only, so they order this queue's own work. An access to the
+    ///       image from another queue has to be ordered by the caller through
+    ///       the timeline.
     /// Not thread safe.
     /// @param dst Destination image, must have TransferDst usage.
     /// @param data Source pointer.
@@ -588,12 +594,12 @@ private:
     /// those two copy the data in or out before returning.
     Buffer& staging(vk::DeviceSize size);
 
-    /// @brief Creates the transfer command pool, command buffer and timeline on
-    ///        first use. Throws unless the timeline semaphore feature is enabled.
+    /// @brief Creates the transfer command pool and timeline on first use.
+    ///        Throws unless the timeline semaphore feature is enabled.
     void ensure_transfer_objects();
 
-    /// @brief Frees the staging buffers of uploads the timeline has passed.
-    void reclaim_stagings();
+    /// @brief Releases the staging and command buffers of uploads the timeline has passed.
+    void reclaim_uploads();
 
     vkb::Instance vkb_instance_;
     vkb::PhysicalDevice vkb_physical_device_;
@@ -635,13 +641,23 @@ private:
     std::vector<Fence> fence_pool_;
     bool immediate_active_ = false;
 
+    /// @brief One started upload, held until the timeline passes its value.
+    struct PendingUpload {
+        uint64_t value = 0;
+        Buffer staging;
+        CommandBuffer command_buffer;
+    };
+
     /// @brief Lazily created objects backing upload_async.
     CommandPool transfer_pool_;
-    CommandBuffer transfer_command_buffer_;
     Semaphore transfer_timeline_;
     uint64_t transfer_counter_ = 0;
-    /// @brief Staging buffers of in-flight uploads, reclaimed when the timeline passes them.
-    std::vector<std::pair<uint64_t, Buffer>> pending_stagings_;
+    /// @brief Uploads still in flight, released once the timeline passes them.
+    ///
+    /// Each upload keeps its own command buffer because they are submitted back
+    /// to back: a command buffer must not be reset or resubmitted while its
+    /// previous submission is still pending.
+    std::vector<PendingUpload> pending_uploads_;
     bool transfer_started_ = false;
 };
 

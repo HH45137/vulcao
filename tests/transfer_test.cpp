@@ -353,3 +353,99 @@ TEST_CASE("upload_async requires the timeline semaphore feature") {
     CHECK_THROWS_AS(context.upload_async(buffer, data), std::runtime_error);
 }
 
+
+TEST_CASE("async uploads can be in flight at the same time") {
+    VULCAO_REQUIRE_DEVICE();
+
+    const vulcao::test::LogLevelGuard log_level_guard;
+    vulcao::set_log_level(vulcao::LogLevel::warning);
+
+    vulcao::test::ErrorCapture capture;
+    vulcao::Context context{transfer_context_info()};
+    context.initialize();
+
+    const std::vector<uint32_t> first_data{1, 2, 3, 4, 5};
+    const std::vector<uint32_t> second_data{6, 7, 8, 9, 10};
+
+    vulcao::Buffer first = vulcao::Buffer::create(
+        context.allocator(), first_data.size() * sizeof(uint32_t),
+        vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eTransferSrc,
+        VMA_MEMORY_USAGE_AUTO, 0, context.transfer_sharing_families());
+    vulcao::Buffer second = vulcao::Buffer::create(
+        context.allocator(), second_data.size() * sizeof(uint32_t),
+        vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eTransferSrc,
+        VMA_MEMORY_USAGE_AUTO, 0, context.transfer_sharing_families());
+
+    // Both uploads are started before either receipt is waited on, which is what
+    // an asynchronous upload exists for.
+    const vulcao::Context::AsyncUpload first_upload = context.upload_async(first, first_data);
+    const vulcao::Context::AsyncUpload second_upload = context.upload_async(second, second_data);
+    CHECK(first_upload.value > 0);
+    CHECK(second_upload.value > first_upload.value);
+
+    vulcao::Buffer first_stage = vulcao::Buffer::create(
+        context.allocator(), first.size(), vk::BufferUsageFlagBits::eTransferDst,
+        VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+    vulcao::Buffer second_stage = vulcao::Buffer::create(
+        context.allocator(), second.size(), vk::BufferUsageFlagBits::eTransferDst,
+        VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+
+    vulcao::CommandBuffer cmd =
+        vulcao::CommandBuffer::allocate(context.device(), context.command_pool());
+    cmd.begin();
+    cmd.copy_buffer(first.handle(), first_stage.handle(), first.size());
+    cmd.copy_buffer(second.handle(), second_stage.handle(), second.size());
+    cmd.end();
+
+    vulcao::Fence done = vulcao::Fence::create(context.device());
+    context.submit(context.graphics_queue(), cmd.handle(), context.transfer_timeline(),
+                   second_upload.value, vk::PipelineStageFlagBits::eTransfer, done.handle());
+    done.wait();
+
+    first_stage.invalidate(0, first.size());
+    second_stage.invalidate(0, second.size());
+    std::vector<uint32_t> first_readback(first_data.size());
+    std::vector<uint32_t> second_readback(second_data.size());
+    std::memcpy(first_readback.data(), first_stage.map(), first.size());
+    std::memcpy(second_readback.data(), second_stage.map(), second.size());
+    CHECK(first_readback == first_data);
+    CHECK(second_readback == second_data);
+
+    for (const std::string& error : capture.errors)
+        MESSAGE("logged error: ", error);
+    CHECK(capture.errors.empty());
+}
+
+TEST_CASE("async upload replaces an image that is already uploaded") {
+    VULCAO_REQUIRE_DEVICE();
+
+    const vulcao::test::LogLevelGuard log_level_guard;
+    vulcao::set_log_level(vulcao::LogLevel::warning);
+
+    vulcao::test::ErrorCapture capture;
+    vulcao::Context context{transfer_context_info()};
+    context.initialize();
+
+    constexpr uint32_t width = 4;
+    constexpr uint32_t height = 4;
+    const std::vector<uint8_t> pixels(static_cast<size_t>(width) * height * 4, 0x7f);
+
+    vulcao::Image image = vulcao::Image::create_2d(
+        context.allocator(), vk::Extent2D{width, height}, vk::Format::eR8G8B8A8Unorm,
+        vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc |
+            vk::ImageUsageFlagBits::eSampled,
+        1, vk::SampleCountFlagBits::e1, context.transfer_sharing_families());
+
+    // The first upload leaves the image shader read only, so the second one
+    // transitions out of a layout that a transfer only queue has no stage for.
+    const vulcao::Context::AsyncUpload first = context.upload_async(image, pixels);
+    context.wait_upload(first);
+    CHECK(image.layout() == vk::ImageLayout::eShaderReadOnlyOptimal);
+
+    const vulcao::Context::AsyncUpload second = context.upload_async(image, pixels);
+    context.wait_upload(second);
+
+    for (const std::string& error : capture.errors)
+        MESSAGE("logged error: ", error);
+    CHECK(capture.errors.empty());
+}

@@ -101,10 +101,12 @@ anything that mutates shared state is externally synchronized. Concretely:
   and the driver handle their own locking), recording into command buffers
   allocated from *different* `CommandPool`s, and logging through the global
   log callback.
-- **Single thread only**: `Context::immediate()`, `upload()`/`download()` and
-  `upload_async()` (they share one internal command buffer and the staging
-  bookkeeping), `FrameManager` as a whole, `DescriptorSetLayoutCache`, and any
-  individual `CommandPool` (allocate from separate pools per thread instead).
+- **Single thread only**: `Context::immediate()` and `upload()`/`download()` (they
+  share one internal command buffer and the staging buffer), `upload_async()` (the
+  transfer pool, the timeline and the pending upload bookkeeping are shared even
+  though each call gets its own staging and command buffer), `FrameManager` as a
+  whole, `DescriptorSetLayoutCache`, and any individual `CommandPool` (allocate
+  from separate pools per thread instead).
 - **Queue submission**: `vkQueueSubmit` must not run concurrently on the same
   queue, so serialize calls to the `Context::submit*` family that target the
   same queue (different queues are fine).

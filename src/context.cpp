@@ -80,10 +80,12 @@ Context::~Context() {
         destroy_swapchain_resources();
 
         if (transfer_started_) {
-            transfer_command_buffer_.destroy();
+            // Release the in-flight uploads first: their command buffers have to
+            // go back to the pool while it still exists, and their staging
+            // buffers have to be freed before the allocator goes away.
+            pending_uploads_.clear();
             transfer_pool_.destroy();
             transfer_timeline_.destroy();
-            pending_stagings_.clear();
         }
 
         staging_ = Buffer{};
@@ -653,21 +655,17 @@ void Context::ensure_transfer_objects() {
         has_transfer_queue_ ? transfer_queue_family_index_ : graphics_queue_family_index_;
     transfer_pool_ =
         CommandPool::create(device_, family, vk::CommandPoolCreateFlagBits::eResetCommandBuffer);
-    transfer_command_buffer_ = transfer_pool_.allocate(vk::CommandBufferLevel::ePrimary,
-                                                       debug_utils_enabled_);
     transfer_timeline_ = Semaphore::create_timeline(device_, 0);
     transfer_started_ = true;
 }
 
-void Context::reclaim_stagings() {
+void Context::reclaim_uploads() {
     if (!transfer_started_)
         return;
 
     const uint64_t reached = transfer_timeline_.value();
-    std::erase_if(pending_stagings_,
-                  [reached](const std::pair<uint64_t, Buffer>& pending) {
-                      return pending.first <= reached;
-                  });
+    std::erase_if(pending_uploads_,
+                  [reached](const PendingUpload& pending) { return pending.value <= reached; });
 }
 
 Context::AsyncUpload Context::upload_async(Buffer& dst, const void* data, vk::DeviceSize size) {
@@ -685,23 +683,26 @@ Context::AsyncUpload Context::upload_async(Buffer& dst, const void* data, vk::De
             "created with eConcurrent sharing, see Context::transfer_sharing_families");
 
     ensure_transfer_objects();
-    reclaim_stagings();
+    reclaim_uploads();
 
     Buffer stage = Buffer::create(allocator_, size, vk::BufferUsageFlagBits::eTransferSrc,
                                   VMA_MEMORY_USAGE_AUTO,
                                   VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
     stage.write_bytes(data, size);
 
-    transfer_command_buffer_.reset();
-    transfer_command_buffer_.begin();
-    transfer_command_buffer_.copy_buffer(stage.handle(), dst.handle(), size);
-    transfer_command_buffer_.end();
+    // A command buffer of its own: uploads are submitted back to back, and the
+    // previous one is still pending, so it must not be reset or reused.
+    CommandBuffer cmd =
+        transfer_pool_.allocate(vk::CommandBufferLevel::ePrimary, debug_utils_enabled_);
+    cmd.begin();
+    cmd.copy_buffer(stage.handle(), dst.handle(), size);
+    cmd.end();
 
     const uint64_t value = ++transfer_counter_;
-    submit(has_transfer_queue_ ? transfer_queue_ : graphics_queue_,
-           transfer_command_buffer_.handle(), transfer_timeline_, value);
+    submit(has_transfer_queue_ ? transfer_queue_ : graphics_queue_, cmd.handle(),
+           transfer_timeline_, value);
 
-    pending_stagings_.emplace_back(value, std::move(stage));
+    pending_uploads_.push_back(PendingUpload{value, std::move(stage), std::move(cmd)});
     return AsyncUpload{value};
 }
 
@@ -727,36 +728,50 @@ Context::AsyncUpload Context::upload_async(Image& dst,
             "created with eConcurrent sharing, see Context::transfer_sharing_families");
 
     ensure_transfer_objects();
-    reclaim_stagings();
+    reclaim_uploads();
 
     Buffer stage = Buffer::create(allocator_, size, vk::BufferUsageFlagBits::eTransferSrc,
                                   VMA_MEMORY_USAGE_AUTO,
                                   VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
     stage.write_bytes(data, size);
 
-    transfer_command_buffer_.reset();
-    transfer_command_buffer_.begin();
-    transfer_command_buffer_.transition(dst, vk::ImageLayout::eTransferDstOptimal);
-    transfer_command_buffer_.copy_buffer_to_image(stage.handle(), dst);
-    if (has_transfer_queue_)
-        // A dedicated transfer queue only supports the transfer stage, so the
-        // layout-derived fragment/compute stages would be invalid here
-        // (VUID-09676). Ordering to the graphics side comes from the timeline
-        // wait, not from this barrier's destination mask.
-        transfer_command_buffer_.transition(dst, final_layout,
-                                            vk::PipelineStageFlagBits2::eTransfer,
-                                            vk::AccessFlagBits2::eTransferWrite,
-                                            vk::PipelineStageFlagBits2::eTransfer,
-                                            vk::AccessFlagBits2::eTransferWrite);
+    // A command buffer of its own: uploads are submitted back to back, and the
+    // previous one is still pending, so it must not be reset or reused.
+    CommandBuffer cmd =
+        transfer_pool_.allocate(vk::CommandBufferLevel::ePrimary, debug_utils_enabled_);
+    cmd.begin();
+
+    // A dedicated transfer queue only supports the transfer stage, so both
+    // transitions spell their dependency out rather than deriving fragment or
+    // compute stages from the image's layout, which that queue cannot name
+    // (VUID-vkCmdPipelineBarrier2-srcStageMask-09675). Ordering against the
+    // graphics side comes from the timeline, not from these barriers.
+    const bool transfer_only = has_transfer_queue_;
+    if (transfer_only && dst.layout() != vk::ImageLayout::eUndefined)
+        cmd.transition(dst, vk::ImageLayout::eTransferDstOptimal,
+                       vk::PipelineStageFlagBits2::eTransfer,
+                       vk::AccessFlagBits2::eTransferWrite,
+                       vk::PipelineStageFlagBits2::eTransfer,
+                       vk::AccessFlagBits2::eTransferWrite);
     else
-        transfer_command_buffer_.transition(dst, final_layout);
-    transfer_command_buffer_.end();
+        cmd.transition(dst, vk::ImageLayout::eTransferDstOptimal);
+
+    cmd.copy_buffer_to_image(stage.handle(), dst);
+
+    if (transfer_only)
+        cmd.transition(dst, final_layout, vk::PipelineStageFlagBits2::eTransfer,
+                       vk::AccessFlagBits2::eTransferWrite,
+                       vk::PipelineStageFlagBits2::eTransfer,
+                       vk::AccessFlagBits2::eTransferWrite);
+    else
+        cmd.transition(dst, final_layout);
+    cmd.end();
 
     const uint64_t value = ++transfer_counter_;
-    submit(has_transfer_queue_ ? transfer_queue_ : graphics_queue_,
-           transfer_command_buffer_.handle(), transfer_timeline_, value);
+    submit(has_transfer_queue_ ? transfer_queue_ : graphics_queue_, cmd.handle(),
+           transfer_timeline_, value);
 
-    pending_stagings_.emplace_back(value, std::move(stage));
+    pending_uploads_.push_back(PendingUpload{value, std::move(stage), std::move(cmd)});
     return AsyncUpload{value};
 }
 
@@ -765,7 +780,7 @@ void Context::wait_upload(const AsyncUpload& upload) {
         return;
 
     transfer_timeline_.wait(upload.value);
-    reclaim_stagings();
+    reclaim_uploads();
 }
 
 void Context::wait_uploads() {
@@ -773,7 +788,7 @@ void Context::wait_uploads() {
         return;
 
     transfer_timeline_.wait(transfer_counter_);
-    reclaim_stagings();
+    reclaim_uploads();
 }
 
 }
