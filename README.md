@@ -14,7 +14,10 @@ layouts from SPIR-V reflection.
   create-and-upload pair in one call), `BufferView` for texel buffers, `Image`
   (2D/depth factories, mipmap generation), `Sampler` and `CommandPool`.
 - Transfer: staging-backed `upload`/`download` for buffers and images, with the
-  full `vk::BufferImageCopy` region exposed for row-pitched data.
+  full `vk::BufferImageCopy` region exposed for row-pitched data. `upload_async`
+  runs uploads on the dedicated transfer queue (when requested) and reports
+  completion through a timeline semaphore; destinations are created with
+  `Context::transfer_sharing_families()` so no ownership ceremony is needed.
 - Synchronization: `Fence`, binary and timeline `Semaphore`, `QueryPool` and a
   `FrameManager` that owns frames in flight, swapchain acquire and present,
   plus per-slot `DeletionQueue`s: `defer_destroy` retires a resource once the

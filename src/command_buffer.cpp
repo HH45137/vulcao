@@ -276,6 +276,20 @@ CommandBuffer& CommandBuffer::transition(Image& image,
     return *this;
 }
 
+CommandBuffer& CommandBuffer::transition(Image& image,
+                                         vk::ImageLayout new_layout,
+                                         uint32_t src_queue_family,
+                                         uint32_t dst_queue_family,
+                                         vk::PipelineStageFlags2 src_stage,
+                                         vk::AccessFlags2 src_access,
+                                         vk::PipelineStageFlags2 dst_stage,
+                                         vk::AccessFlags2 dst_access) {
+    transition(image.handle(), image.layout(), new_layout, image.subresource_range(), src_stage,
+               src_access, dst_stage, dst_access, src_queue_family, dst_queue_family);
+    image.set_layout(new_layout);
+    return *this;
+}
+
 CommandBuffer& CommandBuffer::release_image(Image& image,
                                             uint32_t producer_queue_family,
                                             uint32_t consumer_queue_family,

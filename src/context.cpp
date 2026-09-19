@@ -3,6 +3,7 @@
 #include "vulcao/check.h"
 #include "vulcao/image.h"
 
+#include <algorithm>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -77,6 +78,13 @@ Context::~Context() {
         }
 
         destroy_swapchain_resources();
+
+        if (transfer_started_) {
+            transfer_command_buffer_.destroy();
+            transfer_pool_.destroy();
+            transfer_timeline_.destroy();
+            pending_stagings_.clear();
+        }
 
         staging_ = Buffer{};
         allocator_.destroy();
@@ -461,6 +469,29 @@ void Context::submit(vk::Queue queue,
                  fence);
 }
 
+void Context::submit(vk::Queue queue,
+                     vk::CommandBuffer cmd,
+                     const Semaphore& wait_semaphore,
+                     uint64_t wait_value,
+                     vk::PipelineStageFlags wait_stage,
+                     vk::Fence fence) {
+    const vk::TimelineSemaphoreSubmitInfo timeline_info{
+        .waitSemaphoreValueCount = 1,
+        .pWaitSemaphoreValues = &wait_value,
+    };
+    const vk::Semaphore semaphore = wait_semaphore.handle();
+
+    queue.submit(vk::SubmitInfo{
+                     .pNext = &timeline_info,
+                     .waitSemaphoreCount = 1,
+                     .pWaitSemaphores = &semaphore,
+                     .pWaitDstStageMask = &wait_stage,
+                     .commandBufferCount = 1,
+                     .pCommandBuffers = &cmd,
+                 },
+                 fence);
+}
+
 void Context::submit(vk::CommandBuffer cmd, vk::Fence fence) {
     submit(vk::SubmitInfo{
                .commandBufferCount = 1,
@@ -599,6 +630,150 @@ Buffer& Context::staging(vk::DeviceSize size) {
                                   VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
     }
     return staging_;
+}
+
+std::vector<uint32_t> Context::transfer_sharing_families() const {
+    if (has_transfer_queue_)
+        return {graphics_queue_family_index_, transfer_queue_family_index_};
+    return {graphics_queue_family_index_};
+}
+
+void Context::ensure_transfer_objects() {
+    if (transfer_started_)
+        return;
+    if (!initialized())
+        throw std::runtime_error("Context::upload_async before initialize");
+    if (!info_.device_features.timeline_semaphore)
+        throw std::runtime_error(
+            "Context::upload_async requires DeviceFeatures::timeline_semaphore");
+
+    // Without a dedicated transfer queue the uploads fall back to the graphics
+    // queue; the flow is identical minus the ownership transfer.
+    const uint32_t family =
+        has_transfer_queue_ ? transfer_queue_family_index_ : graphics_queue_family_index_;
+    transfer_pool_ =
+        CommandPool::create(device_, family, vk::CommandPoolCreateFlagBits::eResetCommandBuffer);
+    transfer_command_buffer_ = transfer_pool_.allocate(vk::CommandBufferLevel::ePrimary,
+                                                       debug_utils_enabled_);
+    transfer_timeline_ = Semaphore::create_timeline(device_, 0);
+    transfer_started_ = true;
+}
+
+void Context::reclaim_stagings() {
+    if (!transfer_started_)
+        return;
+
+    const uint64_t reached = transfer_timeline_.value();
+    std::erase_if(pending_stagings_,
+                  [reached](const std::pair<uint64_t, Buffer>& pending) {
+                      return pending.first <= reached;
+                  });
+}
+
+Context::AsyncUpload Context::upload_async(Buffer& dst, const void* data, vk::DeviceSize size) {
+    if (size == 0)
+        return {};
+    if (!dst.valid())
+        throw std::runtime_error("Context::upload_async: invalid destination buffer");
+    if (!(dst.usage() & vk::BufferUsageFlagBits::eTransferDst))
+        throw std::runtime_error("Context::upload_async: destination buffer requires TransferDst usage");
+    if (size > dst.size())
+        throw std::runtime_error("Context::upload_async: data size exceeds destination buffer size");
+    if (has_transfer_queue_ && dst.sharing_mode() != vk::SharingMode::eConcurrent)
+        throw std::runtime_error(
+            "Context::upload_async: with a dedicated transfer queue the destination must be "
+            "created with eConcurrent sharing, see Context::transfer_sharing_families");
+
+    ensure_transfer_objects();
+    reclaim_stagings();
+
+    Buffer stage = Buffer::create(allocator_, size, vk::BufferUsageFlagBits::eTransferSrc,
+                                  VMA_MEMORY_USAGE_AUTO,
+                                  VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+    stage.write_bytes(data, size);
+
+    transfer_command_buffer_.reset();
+    transfer_command_buffer_.begin();
+    transfer_command_buffer_.copy_buffer(stage.handle(), dst.handle(), size);
+    transfer_command_buffer_.end();
+
+    const uint64_t value = ++transfer_counter_;
+    submit(has_transfer_queue_ ? transfer_queue_ : graphics_queue_,
+           transfer_command_buffer_.handle(), transfer_timeline_, value);
+
+    pending_stagings_.emplace_back(value, std::move(stage));
+    return AsyncUpload{value};
+}
+
+Context::AsyncUpload Context::upload_async(Image& dst,
+                                           const void* data,
+                                           vk::DeviceSize size,
+                                           vk::ImageLayout final_layout) {
+    if (size == 0)
+        return {};
+    if (!dst.valid())
+        throw std::runtime_error("Context::upload_async: invalid destination image");
+    if (!(dst.usage() & vk::ImageUsageFlagBits::eTransferDst))
+        throw std::runtime_error("Context::upload_async: destination image requires TransferDst usage");
+
+    const vk::DeviceSize required = image_byte_size(dst.extent(), dst.format());
+    if (size < required)
+        throw std::runtime_error("Context::upload_async: " + std::to_string(size) +
+                                 " bytes are not enough for the destination image, which needs " +
+                                 std::to_string(required));
+    if (has_transfer_queue_ && dst.sharing_mode() != vk::SharingMode::eConcurrent)
+        throw std::runtime_error(
+            "Context::upload_async: with a dedicated transfer queue the destination must be "
+            "created with eConcurrent sharing, see Context::transfer_sharing_families");
+
+    ensure_transfer_objects();
+    reclaim_stagings();
+
+    Buffer stage = Buffer::create(allocator_, size, vk::BufferUsageFlagBits::eTransferSrc,
+                                  VMA_MEMORY_USAGE_AUTO,
+                                  VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+    stage.write_bytes(data, size);
+
+    transfer_command_buffer_.reset();
+    transfer_command_buffer_.begin();
+    transfer_command_buffer_.transition(dst, vk::ImageLayout::eTransferDstOptimal);
+    transfer_command_buffer_.copy_buffer_to_image(stage.handle(), dst);
+    if (has_transfer_queue_)
+        // A dedicated transfer queue only supports the transfer stage, so the
+        // layout-derived fragment/compute stages would be invalid here
+        // (VUID-09676). Ordering to the graphics side comes from the timeline
+        // wait, not from this barrier's destination mask.
+        transfer_command_buffer_.transition(dst, final_layout,
+                                            vk::PipelineStageFlagBits2::eTransfer,
+                                            vk::AccessFlagBits2::eTransferWrite,
+                                            vk::PipelineStageFlagBits2::eTransfer,
+                                            vk::AccessFlagBits2::eTransferWrite);
+    else
+        transfer_command_buffer_.transition(dst, final_layout);
+    transfer_command_buffer_.end();
+
+    const uint64_t value = ++transfer_counter_;
+    submit(has_transfer_queue_ ? transfer_queue_ : graphics_queue_,
+           transfer_command_buffer_.handle(), transfer_timeline_, value);
+
+    pending_stagings_.emplace_back(value, std::move(stage));
+    return AsyncUpload{value};
+}
+
+void Context::wait_upload(const AsyncUpload& upload) {
+    if (upload.value == 0)
+        return;
+
+    transfer_timeline_.wait(upload.value);
+    reclaim_stagings();
+}
+
+void Context::wait_uploads() {
+    if (!transfer_started_)
+        return;
+
+    transfer_timeline_.wait(transfer_counter_);
+    reclaim_stagings();
 }
 
 }

@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <vulkan/vulkan.hpp>
@@ -194,6 +195,20 @@ public:
                 uint64_t signal_value,
                 vk::Fence fence = {});
 
+    /// @brief Submits a command buffer that waits for a timeline semaphore before executing.
+    /// @param queue Queue to submit to.
+    /// @param cmd Command buffer to submit.
+    /// @param wait_semaphore Timeline semaphore to wait on.
+    /// @param wait_value Value the semaphore must reach before execution.
+    /// @param wait_stage Pipeline stage the wait blocks.
+    /// @param fence Optional fence signaled when the submission completes.
+    void submit(vk::Queue queue,
+                vk::CommandBuffer cmd,
+                const Semaphore& wait_semaphore,
+                uint64_t wait_value,
+                vk::PipelineStageFlags wait_stage,
+                vk::Fence fence = {});
+
     /// @brief Records one-time commands with the internal command buffer, submits and waits.
     ///
     /// Not reentrant: the context owns a single command buffer, so calling
@@ -319,6 +334,100 @@ public:
                  static_cast<vk::DeviceSize>(std::ranges::size(data)) * sizeof(T));
     }
 
+    /// @brief Receipt of an upload started with upload_async.
+    struct AsyncUpload {
+        /// @brief Timeline value signaled on transfer_timeline() when the upload
+        ///        has landed on the device. Zero for an empty receipt.
+        uint64_t value = 0;
+    };
+
+    /// @brief Starts an asynchronous buffer upload on the transfer queue.
+    ///
+    /// Records the copy on the dedicated transfer queue (or the graphics queue
+    /// when none was requested) and returns immediately; the data lands when
+    /// transfer_timeline() signals the returned value. A graphics submission
+    /// using the buffer must wait for that value (see the submit overload
+    /// taking a wait semaphore); with a dedicated transfer queue the buffer
+    /// must additionally be created with eConcurrent sharing, see
+    /// transfer_sharing_families().
+    ///
+    /// Not thread safe: shares an internal command buffer and staging
+    /// bookkeeping with the other upload_async calls.
+    /// @param dst Destination buffer, must have TransferDst usage.
+    /// @param data Source pointer.
+    /// @param size Number of bytes to upload.
+    /// @return Receipt whose value is signaled when the upload completes.
+    /// @throws std::runtime_error if the destination is invalid, lacks TransferDst
+    ///         usage or is too small, is not shared concurrently when a
+    ///         dedicated transfer queue is in use, or
+    ///         DeviceFeatures::timeline_semaphore was not enabled for this context.
+    AsyncUpload upload_async(Buffer& dst, const void* data, vk::DeviceSize size);
+
+    /// @brief Starts an asynchronous buffer upload of a contiguous range.
+    /// @tparam Container Contiguous range of trivially copyable values.
+    /// @param dst Destination buffer, must have TransferDst usage.
+    /// @param data Source range.
+    /// @return Receipt whose value is signaled when the upload completes.
+    template <typename Container>
+        requires std::ranges::contiguous_range<Container>
+    AsyncUpload upload_async(Buffer& dst, const Container& data) {
+        using T = std::ranges::range_value_t<Container>;
+        static_assert(std::is_trivially_copyable_v<T>, "buffer data must be trivially copyable");
+        return upload_async(dst, std::ranges::data(data),
+                            static_cast<vk::DeviceSize>(std::ranges::size(data)) * sizeof(T));
+    }
+
+    /// @brief Starts an asynchronous image upload of mip 0 on the transfer queue.
+    ///
+    /// The image is transitioned to TransferDst, copied into and moved to
+    /// @p final_layout. A graphics submission using the image must wait for
+    /// the returned value (see the submit overload taking a wait semaphore);
+    /// with a dedicated transfer queue the image must additionally be created
+    /// with eConcurrent sharing, see transfer_sharing_families().
+    /// Not thread safe.
+    /// @param dst Destination image, must have TransferDst usage.
+    /// @param data Source pointer.
+    /// @param size Number of bytes to upload. Must cover mip 0 of the image.
+    /// @param final_layout Layout the image ends in.
+    /// @return Receipt whose value is signaled when the upload completes.
+    /// @throws std::runtime_error on the same conditions as the buffer overload.
+    AsyncUpload upload_async(Image& dst,
+                             const void* data,
+                             vk::DeviceSize size,
+                             vk::ImageLayout final_layout = vk::ImageLayout::eShaderReadOnlyOptimal);
+
+    /// @brief Starts an asynchronous image upload of a contiguous range.
+    /// @tparam Container Contiguous range of trivially copyable values.
+    /// @param dst Destination image, must have TransferDst usage.
+    /// @param data Source range.
+    /// @param final_layout Layout the image ends in.
+    /// @return Receipt whose value is signaled when the upload completes.
+    template <typename Container>
+        requires std::ranges::contiguous_range<Container>
+    AsyncUpload upload_async(Image& dst,
+                             const Container& data,
+                             vk::ImageLayout final_layout = vk::ImageLayout::eShaderReadOnlyOptimal) {
+        using T = std::ranges::range_value_t<Container>;
+        static_assert(std::is_trivially_copyable_v<T>, "image data must be trivially copyable");
+        return upload_async(dst, std::ranges::data(data),
+                            static_cast<vk::DeviceSize>(std::ranges::size(data)) * sizeof(T),
+                            final_layout);
+    }
+
+    /// @brief Returns the timeline semaphore the transfer uploads signal.
+    ///
+    /// Valid after the first upload_async call; wait on it in a graphics
+    /// submission through the submit overload taking a wait semaphore.
+    const Semaphore& transfer_timeline() const { return transfer_timeline_; }
+
+    /// @brief Waits from the host until an upload has landed, and reclaims its
+    ///        staging buffer. No-op for an empty receipt.
+    /// @param upload Receipt returned by upload_async.
+    void wait_upload(const AsyncUpload& upload);
+
+    /// @brief Waits from the host until every started upload has landed.
+    void wait_uploads();
+
     /// @brief Returns true if the context has been initialized.
     bool initialized() const { return static_cast<bool>(device_); }
 
@@ -369,6 +478,16 @@ public:
 
     /// @brief Returns true if a dedicated transfer queue is available.
     bool has_transfer_queue() const { return has_transfer_queue_; }
+
+    /// @brief Returns the queue families a resource must be shared between to
+    ///        serve as an upload_async destination.
+    ///
+    /// With a dedicated transfer queue this is {graphics, transfer}, so the
+    /// resource is created with eConcurrent sharing and no ownership transfer
+    /// is needed; without one it is {graphics} and any exclusive resource
+    /// works. Pass the result as the concurrent_families parameter of
+    /// Buffer::create / Image::create_2d.
+    std::vector<uint32_t> transfer_sharing_families() const;
 
     /// @brief Returns the swapchain.
     vk::SwapchainKHR swapchain() const { return swapchain_; }
@@ -443,6 +562,13 @@ private:
     /// @brief Returns a host visible staging buffer that holds at least size bytes.
     Buffer& staging(vk::DeviceSize size);
 
+    /// @brief Creates the transfer command pool, command buffer and timeline on
+    ///        first use. Throws unless the timeline semaphore feature is enabled.
+    void ensure_transfer_objects();
+
+    /// @brief Frees the staging buffers of uploads the timeline has passed.
+    void reclaim_stagings();
+
     vkb::Instance vkb_instance_;
     vkb::PhysicalDevice vkb_physical_device_;
     vkb::Device vkb_device_;
@@ -482,6 +608,15 @@ private:
     /// @brief Context-owned fences recycled by submit_pooled().
     std::vector<Fence> fence_pool_;
     bool immediate_active_ = false;
+
+    /// @brief Lazily created objects backing upload_async.
+    CommandPool transfer_pool_;
+    CommandBuffer transfer_command_buffer_;
+    Semaphore transfer_timeline_;
+    uint64_t transfer_counter_ = 0;
+    /// @brief Staging buffers of in-flight uploads, reclaimed when the timeline passes them.
+    std::vector<std::pair<uint64_t, Buffer>> pending_stagings_;
+    bool transfer_started_ = false;
 };
 
 }

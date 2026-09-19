@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -205,3 +206,150 @@ TEST_CASE("Buffer::create_with_data folds creation and upload into one call") {
 
     CHECK(capture.errors.empty());
 }
+
+namespace {
+
+/// @brief Context parameters for transfer upload tests: dedicated transfer
+///        queue when the GPU offers one, timeline semaphores always.
+vulcao::ContextInfo transfer_context_info() {
+    vulcao::ContextInfo info;
+    info.headless = true;
+    info.validation = true;
+    info.separate_transfer_queue = true;
+    info.device_features.timeline_semaphore = true;
+    return info;
+}
+
+}
+
+TEST_CASE("async upload round trips a buffer through the transfer queue") {
+    VULCAO_REQUIRE_DEVICE();
+
+    const vulcao::test::LogLevelGuard log_level_guard;
+    vulcao::set_log_level(vulcao::LogLevel::warning);
+
+    vulcao::test::ErrorCapture capture;
+    vulcao::Context context{transfer_context_info()};
+    context.initialize();
+
+    const std::vector<uint32_t> data{42, 43, 44, 45, 46};
+
+    // With a dedicated transfer queue, an exclusive destination is rejected.
+    if (context.has_transfer_queue()) {
+        vulcao::Buffer exclusive = vulcao::Buffer::create(
+            context.allocator(), data.size() * sizeof(uint32_t),
+            vk::BufferUsageFlagBits::eTransferDst);
+        CHECK_THROWS_AS(context.upload_async(exclusive, data), std::runtime_error);
+    }
+
+    vulcao::Buffer buffer = vulcao::Buffer::create(
+        context.allocator(), data.size() * sizeof(uint32_t),
+        vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst |
+            vk::BufferUsageFlagBits::eTransferSrc,
+        VMA_MEMORY_USAGE_AUTO, 0, context.transfer_sharing_families());
+
+    const vulcao::Context::AsyncUpload upload = context.upload_async(buffer, data);
+    CHECK(upload.value > 0);
+    CHECK(context.transfer_timeline().valid());
+
+    context.wait_upload(upload);
+
+    // Graphics side: no ownership ceremony, just order the readback after the
+    // upload through the timeline.
+    vulcao::Buffer readback_stage = vulcao::Buffer::create(
+        context.allocator(), buffer.size(), vk::BufferUsageFlagBits::eTransferDst,
+        VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+
+    // A second upload of the same buffer works without extra barriers.
+    const vulcao::Context::AsyncUpload second = context.upload_async(buffer, data);
+    vulcao::CommandBuffer cmd =
+        vulcao::CommandBuffer::allocate(context.device(), context.command_pool());
+    cmd.begin();
+    cmd.copy_buffer(buffer.handle(), readback_stage.handle(), buffer.size());
+    cmd.end();
+
+    vulcao::Fence done = vulcao::Fence::create(context.device());
+    context.submit(context.graphics_queue(), cmd.handle(), context.transfer_timeline(),
+                   second.value, vk::PipelineStageFlagBits::eTransfer, done.handle());
+    done.wait();
+
+    readback_stage.invalidate(0, buffer.size());
+    std::vector<uint32_t> readback(data.size());
+    std::memcpy(readback.data(), readback_stage.map(), buffer.size());
+    CHECK(readback == data);
+
+    for (const std::string& error : capture.errors)
+        MESSAGE("logged error: ", error);
+    CHECK(capture.errors.empty());
+}
+
+TEST_CASE("async upload moves an image to the graphics family with its final layout") {
+    VULCAO_REQUIRE_DEVICE();
+
+    const vulcao::test::LogLevelGuard log_level_guard;
+    vulcao::set_log_level(vulcao::LogLevel::warning);
+
+    vulcao::test::ErrorCapture capture;
+    vulcao::Context context{transfer_context_info()};
+    context.initialize();
+
+    constexpr uint32_t width = 4;
+    constexpr uint32_t height = 4;
+    std::vector<uint8_t> pixels(static_cast<size_t>(width) * height * 4);
+    for (size_t i = 0; i < pixels.size(); ++i)
+        pixels[i] = static_cast<uint8_t>(i);
+
+    vulcao::Image image = vulcao::Image::create_2d(
+        context.allocator(), vk::Extent2D{width, height}, vk::Format::eR8G8B8A8Unorm,
+        vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc |
+            vk::ImageUsageFlagBits::eSampled,
+        1, vk::SampleCountFlagBits::e1, context.transfer_sharing_families());
+
+    const vulcao::Context::AsyncUpload upload = context.upload_async(image, pixels);
+    CHECK(image.layout() == vk::ImageLayout::eShaderReadOnlyOptimal);
+
+    vulcao::Buffer readback_stage = vulcao::Buffer::create(
+        context.allocator(), pixels.size(), vk::BufferUsageFlagBits::eTransferDst,
+        VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+
+    vulcao::CommandBuffer cmd =
+        vulcao::CommandBuffer::allocate(context.device(), context.command_pool());
+    cmd.begin();
+    cmd.transition(image, vk::ImageLayout::eTransferSrcOptimal);
+    cmd.copy_image_to_buffer(readback_stage.handle(), image);
+    cmd.end();
+
+    vulcao::Fence done = vulcao::Fence::create(context.device());
+    context.submit(context.graphics_queue(), cmd.handle(), context.transfer_timeline(),
+                   upload.value, vk::PipelineStageFlagBits::eTransfer, done.handle());
+    done.wait();
+
+    readback_stage.invalidate(0, pixels.size());
+    std::vector<uint8_t> readback(pixels.size());
+    std::memcpy(readback.data(), readback_stage.map(), pixels.size());
+    CHECK(readback == pixels);
+
+    for (const std::string& error : capture.errors)
+        MESSAGE("logged error: ", error);
+    CHECK(capture.errors.empty());
+}
+
+TEST_CASE("upload_async requires the timeline semaphore feature") {
+    VULCAO_REQUIRE_DEVICE();
+
+    const vulcao::test::LogLevelGuard log_level_guard;
+    vulcao::set_log_level(vulcao::LogLevel::warning);
+
+    vulcao::ContextInfo info;
+    info.headless = true;
+    info.validation = true;
+
+    vulcao::Context context{info};
+    context.initialize();
+
+    vulcao::Buffer buffer = vulcao::Buffer::create(
+        context.allocator(), 16, vk::BufferUsageFlagBits::eTransferDst);
+    const std::vector<uint32_t> data{1, 2, 3, 4};
+    CHECK_THROWS_AS(context.upload_async(buffer, data), std::runtime_error);
+}
+

@@ -192,6 +192,30 @@ public:
                               vk::PipelineStageFlags2 dst_stage = {},
                               vk::AccessFlags2 dst_access = {});
 
+    /// @brief Transitions an image layout while changing its queue family
+    ///        ownership, and updates its tracked layout.
+    ///
+    /// Complements release_image/acquire_image (which keep the layout) for the
+    /// common case where the releasing barrier also moves the layout to its
+    /// final state, e.g. a transfer queue upload ending in ShaderReadOnly.
+    /// @param image Image to transition.
+    /// @param new_layout Target layout.
+    /// @param src_queue_family Queue family that currently owns the image.
+    /// @param dst_queue_family Queue family that receives ownership.
+    /// @param src_stage Source stages. Derived from the tracked layout when zero.
+    /// @param src_access Source access. Derived from the tracked layout when zero.
+    /// @param dst_stage Destination stages. Derived from new_layout when zero.
+    /// @param dst_access Destination access. Derived from new_layout when zero.
+    /// @return This command buffer.
+    CommandBuffer& transition(Image& image,
+                              vk::ImageLayout new_layout,
+                              uint32_t src_queue_family,
+                              uint32_t dst_queue_family,
+                              vk::PipelineStageFlags2 src_stage = {},
+                              vk::AccessFlags2 src_access = {},
+                              vk::PipelineStageFlags2 dst_stage = {},
+                              vk::AccessFlags2 dst_access = {});
+
     /// @brief Releases ownership of an image to another queue family.
     /// @param image Image to release. Its tracked layout is unchanged.
     /// @param producer_queue_family Queue family that currently owns the image.
