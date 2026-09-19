@@ -150,7 +150,7 @@ cmake --build build --target vulcao_docs
 ```
 
 The HTML output is written to `docs/generated/html` and is published to GitHub
-Pages and Codeberg Pages by CI.
+Pages by CI. The library itself is built and tested by CI on every push.
 
 ## Using from another project
 
