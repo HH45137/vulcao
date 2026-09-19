@@ -1,0 +1,276 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# slangc compiles the shaders the samples and the shader-dependent test cases
+# need. Without it those cases are compiled out and the suite silently drops the
+# reflection, pipeline layout and pipeline coverage, so every job installs it
+# from the official Slang release. Bump SLANG_VERSION to move on.
+env:
+  SLANG_VERSION: "2026.18"
+
+jobs:
+  test:
+    name: build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Install the loader, lavapipe and the validation layers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build \
+            libvulkan-dev vulkan-tools \
+            mesa-vulkan-drivers vulkan-validationlayers
+
+      # The hosted runners have no GPU, and the suite fails rather than skips
+      # when no device can be created, so the software rasterizer has to be
+      # present and has to be the one that gets picked. mesa 25.2 renamed the
+      # lavapipe manifest from lvp_icd.x86_64.json to lvp_icd.json, so the glob
+      # must match both spellings; on failure the icd.d listing shows whatever
+      # the next rename produces.
+      - name: Point the loader at lavapipe
+        run: |
+          icd="$(ls /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -n1)"
+          if [ -z "$icd" ]; then
+            echo "no lavapipe ICD; mesa-vulkan-drivers did not install one" >&2
+            ls -la /usr/share/vulkan/icd.d/ >&2 || true
+            exit 1
+          fi
+          {
+            echo "VK_ICD_FILENAMES=$icd"
+            echo "VK_DRIVER_FILES=$icd"
+          } >> "$GITHUB_ENV"
+          echo "using $icd"
+
+      - name: Cache slangc
+        uses: actions/cache@v5
+        with:
+          path: ~/slang
+          key: slang-${{ env.SLANG_VERSION }}-linux-x86_64
+
+      - name: Install slangc
+        run: |
+          url="https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-linux-x86_64.tar.gz"
+          # Look for slangc instead of a fixed path: the tarball's top level
+          # directory name is not part of the interface, and hardcoding it would
+          # silently turn every cache hit into a fresh download.
+          slangc="$(find "$HOME/slang" -type f -name slangc -print -quit 2>/dev/null || true)"
+          if [ -z "$slangc" ]; then
+            mkdir -p "$HOME/slang"
+            curl -sSL --retry 3 -o slang.tar.gz "$url"
+            tar -xzf slang.tar.gz -C "$HOME/slang"
+            slangc="$(find "$HOME/slang" -type f -name slangc -print -quit)"
+          fi
+          if [ -z "$slangc" ]; then
+            echo "slangc missing after extracting $url" >&2
+            exit 1
+          fi
+          chmod +x "$slangc"
+          echo "$(dirname "$slangc")" >> "$GITHUB_PATH"
+          "$slangc" --version
+
+      - name: Report the device the tests will use
+        run: |
+          echo "VK_ICD_FILENAMES=$VK_ICD_FILENAMES"
+          vulkaninfo --summary || true
+
+      # Debug on purpose: ContextInfo::validation defaults to true only when
+      # NDEBUG is undefined, and several cases rely on that default.
+      # Samples off on purpose: this job must stay independent of GLFW and a
+      # display, and it is also the configuration a consumer of the installed
+      # package uses.
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DVULCAO_BUILD_SAMPLES=OFF
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  samples:
+    name: build the samples and run the headless ones
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Install the loader, lavapipe, the validation layers and the windowing dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build \
+            libvulkan-dev vulkan-tools \
+            mesa-vulkan-drivers vulkan-validationlayers \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+            libgl1-mesa-dev libwayland-dev libxkbcommon-dev
+
+      - name: Point the loader at lavapipe
+        run: |
+          icd="$(ls /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -n1)"
+          if [ -z "$icd" ]; then
+            echo "no lavapipe ICD; mesa-vulkan-drivers did not install one" >&2
+            ls -la /usr/share/vulkan/icd.d/ >&2 || true
+            exit 1
+          fi
+          {
+            echo "VK_ICD_FILENAMES=$icd"
+            echo "VK_DRIVER_FILES=$icd"
+          } >> "$GITHUB_ENV"
+          echo "using $icd"
+
+      - name: Cache slangc
+        uses: actions/cache@v5
+        with:
+          path: ~/slang
+          key: slang-${{ env.SLANG_VERSION }}-linux-x86_64
+
+      - name: Install slangc
+        run: |
+          url="https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-linux-x86_64.tar.gz"
+          slangc="$(find "$HOME/slang" -type f -name slangc -print -quit 2>/dev/null || true)"
+          if [ -z "$slangc" ]; then
+            mkdir -p "$HOME/slang"
+            curl -sSL --retry 3 -o slang.tar.gz "$url"
+            tar -xzf slang.tar.gz -C "$HOME/slang"
+            slangc="$(find "$HOME/slang" -type f -name slangc -print -quit)"
+          fi
+          if [ -z "$slangc" ]; then
+            echo "slangc missing after extracting $url" >&2
+            exit 1
+          fi
+          chmod +x "$slangc"
+          echo "$(dirname "$slangc")" >> "$GITHUB_PATH"
+          "$slangc" --version
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DVULCAO_BUILD_SAMPLES=ON
+
+      - name: Build
+        run: cmake --build build
+
+      # 03_compute and 04_offscreen need no display and return non-zero on a
+      # wrong result or on a validation error, so they are real tests rather
+      # than demos. The four windowed samples are only compiled here.
+      - name: Run the headless samples
+        run: |
+          ./build/samples/03_compute/compute
+          ./build/samples/04_offscreen/offscreen
+
+  # One combined job instead of the test/samples split: Windows runners bill
+  # at 2x, so it builds the library, the samples and the tests in one pass,
+  # runs ctest and executes the two headless samples.
+  windows:
+    name: build and test on windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      # The full prebuilt SDK provides the loader, the headers, the validation
+      # layers and SwiftShader from one source; the runners have no GPU, so the
+      # tests run on SwiftShader.
+      - name: Install the Vulkan SDK
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: latest
+          cache: true
+
+      # The SDK zip is unpacked without the installer, so it carries no
+      # registry entries: the loader finds SwiftShader through
+      # VK_DRIVER_FILES/VK_ICD_FILENAMES and the validation layers through
+      # VK_LAYER_PATH. Both are located by search rather than fixed paths so
+      # layout changes between SDK releases fail loudly with a listing
+      # instead of a confusing "no device" error three steps later.
+      - name: Point the loader at SwiftShader and the layers at the SDK
+        shell: bash
+        run: |
+          sdk="$(cygpath -u "$VULKAN_SDK")"
+          icd="$(find "$sdk" -name 'vk_swiftshader.json' -print 2>/dev/null | head -n1)"
+          if [ -z "$icd" ]; then
+            echo "no SwiftShader ICD under $VULKAN_SDK" >&2
+            find "$sdk" -maxdepth 2 >&2 || true
+            exit 1
+          fi
+          layers="$(find "$sdk" -name 'VkLayer_khronos_validation.json' -print 2>/dev/null | head -n1)"
+          if [ -z "$layers" ]; then
+            echo "no validation layer manifest under $VULKAN_SDK" >&2
+            find "$sdk" -maxdepth 2 >&2 || true
+            exit 1
+          fi
+          {
+            echo "VK_DRIVER_FILES=$(cygpath -m "$icd")"
+            echo "VK_ICD_FILENAMES=$(cygpath -m "$icd")"
+            echo "VK_LAYER_PATH=$(cygpath -m "$(dirname "$layers")")"
+          } >> "$GITHUB_ENV"
+          echo "using icd: $icd"
+          echo "using layers: $layers"
+
+      - name: Cache slangc
+        uses: actions/cache@v5
+        with:
+          path: ~/slang
+          key: slang-${{ env.SLANG_VERSION }}-windows-x86_64
+
+      - name: Install slangc
+        shell: bash
+        run: |
+          url="https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-windows-x86_64.zip"
+          slangc="$(find "$HOME/slang" -type f -name slangc.exe -print -quit 2>/dev/null || true)"
+          if [ -z "$slangc" ]; then
+            mkdir -p "$HOME/slang"
+            curl -sSL --retry 3 -o slang.zip "$url"
+            # bsdtar (tar.exe on the runner) unpacks zip files; unzip is not
+            # part of the image.
+            tar -xf slang.zip -C "$HOME/slang"
+            slangc="$(find "$HOME/slang" -type f -name slangc.exe -print -quit)"
+          fi
+          if [ -z "$slangc" ]; then
+            echo "slangc missing after extracting $url" >&2
+            exit 1
+          fi
+          # GITHUB_PATH is read by the runner, so it needs the Windows form.
+          echo "$(cygpath -m "$(dirname "$slangc")")" >> "$GITHUB_PATH"
+          "$(cygpath -m "$slangc")" --version
+
+      - name: Report the device the tests will use
+        shell: bash
+        run: |
+          echo "VK_DRIVER_FILES=$VK_DRIVER_FILES"
+          vulkaninfo --summary || true
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # Debug on purpose, same as the Linux jobs.
+      - name: Configure and build
+        shell: bash
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DVULCAO_BUILD_SAMPLES=ON
+          cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Run the headless samples
+        shell: bash
+        run: |
+          ./build/samples/03_compute/compute.exe
+          ./build/samples/04_offscreen/offscreen.exe
