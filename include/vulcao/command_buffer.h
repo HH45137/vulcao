@@ -155,6 +155,15 @@ public:
                                   vk::AccessFlags2 dst_access);
 
     /// @brief Transitions an image layout using raw handles.
+    ///
+    /// The tracked layout is a CPU-side convention that vulcao maintains on the
+    /// Image wrapper; this overload takes a bare handle, so it cannot read or
+    /// update that state. Prefer the Image& overload unless the image is not
+    /// owned by a vulcao::Image — practical for swapchain images, which the
+    /// Context owns rather than an Image wrapper, so nothing is being tracked
+    /// and there is no state to desynchronize. Using this on a tracked image
+    /// leaves Image::layout() stale, and later barriers then record the wrong
+    /// oldLayout; the resulting hazard is silent outside the validation layers.
     /// @param image Image to transition.
     /// @param old_layout Current layout.
     /// @param new_layout Target layout.
@@ -178,6 +187,11 @@ public:
                               uint32_t dst_queue_family = VK_QUEUE_FAMILY_IGNORED);
 
     /// @brief Transitions an image layout and updates its tracked layout.
+    ///
+    /// The old layout comes from Image::layout(), so the tracked state must be
+    /// accurate when this is called. Start from what the image was created with
+    /// and use this overload for each transition; mixing in the raw-handle
+    /// overload without updating the wrapper desynchronizes the two.
     /// @param image Image to transition.
     /// @param new_layout Target layout.
     /// @param src_stage Source stages. Derived from the tracked layout when zero.
@@ -371,6 +385,9 @@ public:
                                      const vk::ImageSubresourceRange& range);
 
     /// @brief Clears a color image using its tracked layout and range.
+    ///
+    /// Takes the layout from Image::layout(), which must therefore be accurate;
+    /// a clear does not change the layout, so the tracked value stays valid.
     /// @param image Image to clear.
     /// @param color Clear color.
     /// @return This command buffer.
@@ -388,6 +405,9 @@ public:
                                              const vk::ImageSubresourceRange& range);
 
     /// @brief Clears a depth-stencil image using its tracked layout and range.
+    ///
+    /// Takes the layout from Image::layout(); a clear does not change it, so the
+    /// tracked value stays valid afterwards.
     /// @param image Image to clear.
     /// @param depth_stencil Clear depth and stencil values.
     /// @return This command buffer.

@@ -93,7 +93,14 @@ struct SwapchainInfo {
 
 /// @brief Owns the Vulkan instance, device, swapchain, command pool and VMA allocator.
 /// @note immediate(), upload() and download() share an internal command buffer and
-///       staging buffer and are therefore not thread safe.
+///       staging buffer and are therefore not thread safe. upload() and download()
+///       copy through that one staging buffer synchronously, so the host bytes are
+///       complete when the call returns and the buffer carries no state into the
+///       next call. It does keep its peak capacity: the buffer never shrinks.
+/// @note upload_async() shares its own internal command buffer and staging
+///       bookkeeping across calls and is likewise not thread safe, but gives each
+///       call a private staging buffer that it releases once the transfer timeline
+///       passes it.
 class Context {
 public:
     /// @brief Creates the instance.
@@ -290,8 +297,13 @@ public:
     }
 
     /// @brief Reads raw bytes from a buffer into host memory through a staging buffer.
+    ///
+    /// The bytes are copied into @p data before this returns; nothing in the
+    /// arguments aliases the shared staging buffer, so the destination stays
+    /// valid until the caller overwrites it. See staging() for the buffer's
+    /// growth behaviour.
     /// @param src Source buffer, must have TransferSrc usage.
-    /// @param data Destination pointer.
+    /// @param data Destination pointer, owned by the caller and not aliased.
     /// @param size Number of bytes to read.
     /// @throws std::runtime_error if src is invalid, lacks TransferSrc usage or is too small.
     void download(const Buffer& src, void* data, vk::DeviceSize size);
@@ -312,8 +324,11 @@ public:
     }
 
     /// @brief Reads mip 0, layer 0 of an image into host memory and restores its layout.
+    ///
+    /// Like the buffer overload, the bytes are copied into @p data before this
+    /// returns, so @p data does not alias the shared staging buffer.
     /// @param src Source image, must have TransferSrc usage.
-    /// @param data Destination pointer.
+    /// @param data Destination pointer, owned by the caller and not aliased.
     /// @param size Number of bytes to read. Must cover mip 0 of the image.
     /// @throws std::runtime_error if src is invalid, lacks TransferSrc usage, or size is
     ///         smaller than image_byte_size(src.extent(), src.format()).
@@ -350,6 +365,10 @@ public:
     /// taking a wait semaphore); with a dedicated transfer queue the buffer
     /// must additionally be created with eConcurrent sharing, see
     /// transfer_sharing_families().
+    ///
+    /// Unlike upload(), this assigns each call its own staging buffer, so @p data
+    /// only has to stay valid until this call returns, not until the upload lands.
+    /// The staging buffer is released once the timeline passes its value.
     ///
     /// Not thread safe: shares an internal command buffer and staging
     /// bookkeeping with the other upload_async calls.
@@ -560,6 +579,13 @@ private:
     void destroy_swapchain_resources();
 
     /// @brief Returns a host visible staging buffer that holds at least size bytes.
+    ///
+    /// There is exactly one staging buffer, shared by upload(), download() and
+    /// upload()'s mip chain. It grows to the largest request seen so far (rounded
+    /// up to a power of two) and never shrinks, so a single large transfer keeps
+    /// that capacity for the lifetime of the Context. The contents are only
+    /// meaningful until the next upload/download overwrites them, which is why
+    /// those two copy the data in or out before returning.
     Buffer& staging(vk::DeviceSize size);
 
     /// @brief Creates the transfer command pool, command buffer and timeline on

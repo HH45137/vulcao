@@ -79,12 +79,16 @@ Run the tests with `ctest --test-dir build`.
   on a validation error.
 - `04_offscreen`: a triangle rendered into an image, then read back and checked
   pixel by pixel. Also needs no display.
+- `05_texture`: a PNG decoded at run time, uploaded as a mipmapped texture and
+  sampled through a combined image sampler onto a quad that fills the window.
+  Opens a window; pass any image path as the first argument to show another one.
 
 ```sh
 ./build/samples/01_hello_triangle/hello_triangle
 ./build/samples/02_uniforms/uniforms
 ./build/samples/03_compute/compute
 ./build/samples/04_offscreen/offscreen
+./build/samples/05_texture/texture
 ```
 
 ## Threading model
@@ -106,6 +110,33 @@ anything that mutates shared state is externally synchronized. Concretely:
   same queue (different queues are fine).
 - **Image layout tracking** is CPU-side state: the thread that records
   transitions for an `Image` must be the one that reads `layout()`.
+
+## Staging and transfer lifetime
+
+`upload()` and `download()` copy through one shared staging buffer that grows to
+the largest request seen so far and never shrinks, so a single large transfer
+keeps that capacity for the lifetime of the `Context`. The copies themselves are
+synchronous: when the call returns, the host bytes are complete in the
+destination (or in your buffer), so nothing you receive aliases the staging
+buffer and you do not have to copy it out before the next call. The capacity, on
+the other hand, is retained, which is worth knowing before uploading a one-off
+large texture.
+
+`upload_async()` differs: it gives each call a private staging buffer, so the
+source bytes only need to stay valid until the call returns, and the buffer is
+released once the transfer timeline passes its value.
+
+## Image layouts
+
+vulcao tracks an image's layout on the CPU so barriers can fill in their stage
+and access masks automatically. `Image::layout()` is that bookkeeping, not
+something read back from the driver: it starts at the image's `initialLayout`
+and the helpers that take an `Image&` — `transition()`, `generate_mipmaps()`,
+`transition_to_render()` — update it as they record. The raw-handle overloads
+take a bare `vk::Image` and so cannot see or update it. Prefer the `Image&`
+forms; if you do transition through a raw handle, keep `Image::layout()` in step
+yourself, because a stale value makes later barriers record the wrong
+`oldLayout` and the resulting hazard is silent outside the validation layers.
 
 ## Documentation
 

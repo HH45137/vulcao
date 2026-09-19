@@ -114,6 +114,13 @@ public:
     vk::SharingMode sharing_mode() const { return sharing_mode_; }
 
     /// @brief Returns the tracked current layout of the image.
+    ///
+    /// This is CPU-side bookkeeping, not something read back from the driver: it
+    /// starts at the image's initialLayout and is updated by the CommandBuffer
+    /// helpers that take an Image& (transition, generate_mipmaps). Anything that
+    /// transitions the image through raw handles leaves it stale, and a stale
+    /// value makes later barriers record the wrong oldLayout. Keep transitions
+    /// on the Image& overloads so this stays accurate.
     vk::ImageLayout layout() const { return layout_; }
 
     /// @brief Returns the subresource range covered by the image view.
