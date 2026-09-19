@@ -26,9 +26,12 @@ env:
   VULKAN_SDK_VERSION: "1.4.357.0"
 
 jobs:
+  # ubuntu-24.04 on purpose, not ubuntu-latest: the LunarG apt repository is
+  # pinned to the noble codename, and ubuntu-latest migrates to Ubuntu 26 in
+  # October 2026. Revisit when LunarG ships a repo for the newer release.
   test:
     name: build and test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
         with:
@@ -117,7 +120,7 @@ jobs:
 
   samples:
     name: build the samples and run the headless ones
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
         with:
@@ -216,11 +219,12 @@ jobs:
             curl -fsSL --retry 3 -o vulkan-sdk.exe \
               "https://sdk.lunarg.com/sdk/download/${VULKAN_SDK_VERSION}/windows/vulkan-sdk.exe"
           fi
-          # Qt Installer Framework CLI mode: --confirm-command switches it out
-          # of GUI mode, --default-answer takes the defaults (there is no
-          # --default, which the installer rejects).
+          # Qt Installer Framework CLI mode: the trailing install command is
+          # what switches the installer out of GUI mode - without it every
+          # option is merely warned about and ignored. --default-answer takes
+          # the defaults, --confirm-command skips the final y/n prompt.
           ./vulkan-sdk.exe --root "$PWD/VULKAN_SDK" --accept-licenses \
-            --default-answer --confirm-command
+            --default-answer --confirm-command install
           lib="$(find "$PWD/VULKAN_SDK" -name vulkan-1.lib -print -quit)"
           if [ -z "$lib" ]; then
             echo "installer produced no vulkan-1.lib under $PWD/VULKAN_SDK" >&2
