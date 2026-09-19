@@ -244,6 +244,69 @@ const DescriptorSet& DescriptorSet::write_storage_image(uint32_t binding,
     return *this;
 }
 
+const DescriptorSet& DescriptorSet::write_image_descriptor(uint32_t binding,
+                                                           const vk::DescriptorImageInfo& info,
+                                                           vk::DescriptorType type) const {
+    device_.updateDescriptorSets(vk::WriteDescriptorSet{
+                                     .dstSet = set_,
+                                     .dstBinding = binding,
+                                     .descriptorCount = 1,
+                                     .descriptorType = type,
+                                     .pImageInfo = &info,
+                                 },
+                                 {});
+    return *this;
+}
+
+const DescriptorSet& DescriptorSet::write_sampler(uint32_t binding, const Sampler& sampler) const {
+    return write_image_descriptor(binding,
+                                  vk::DescriptorImageInfo{.sampler = sampler.handle()},
+                                  vk::DescriptorType::eSampler);
+}
+
+const DescriptorSet& DescriptorSet::write_sampled_image(uint32_t binding,
+                                                        const Image& image,
+                                                        vk::ImageLayout layout) const {
+    return write_image_descriptor(
+        binding,
+        vk::DescriptorImageInfo{.imageView = image.view(), .imageLayout = layout},
+        vk::DescriptorType::eSampledImage);
+}
+
+const DescriptorSet& DescriptorSet::write_input_attachment(uint32_t binding,
+                                                           const Image& image,
+                                                           vk::ImageLayout layout) const {
+    return write_image_descriptor(
+        binding,
+        vk::DescriptorImageInfo{.imageView = image.view(), .imageLayout = layout},
+        vk::DescriptorType::eInputAttachment);
+}
+
+const DescriptorSet& DescriptorSet::write_texel_buffer(uint32_t binding,
+                                                       const BufferView& view,
+                                                       vk::DescriptorType type) const {
+    const vk::BufferView handle = view.handle();
+    device_.updateDescriptorSets(vk::WriteDescriptorSet{
+                                     .dstSet = set_,
+                                     .dstBinding = binding,
+                                     .descriptorCount = 1,
+                                     .descriptorType = type,
+                                     .pTexelBufferView = &handle,
+                                 },
+                                 {});
+    return *this;
+}
+
+const DescriptorSet& DescriptorSet::write_uniform_texel_buffer(uint32_t binding,
+                                                               const BufferView& view) const {
+    return write_texel_buffer(binding, view, vk::DescriptorType::eUniformTexelBuffer);
+}
+
+const DescriptorSet& DescriptorSet::write_storage_texel_buffer(uint32_t binding,
+                                                               const BufferView& view) const {
+    return write_texel_buffer(binding, view, vk::DescriptorType::eStorageTexelBuffer);
+}
+
 DescriptorSetWriter::DescriptorSetWriter(const DescriptorSet& set)
     : device_(set.device_), set_(set.set_) {}
 
@@ -257,7 +320,7 @@ DescriptorSetWriter& DescriptorSetWriter::write_buffer(uint32_t binding,
         .binding = binding,
         .array_element = array_element,
         .type = type,
-        .is_image = false,
+        .payload = Record::Payload::buffer,
         .buffer_info = vk::DescriptorBufferInfo{
             .buffer = buffer.handle(),
             .offset = offset,
@@ -294,7 +357,7 @@ DescriptorSetWriter& DescriptorSetWriter::write_image(uint32_t binding,
         .binding = binding,
         .array_element = array_element,
         .type = vk::DescriptorType::eCombinedImageSampler,
-        .is_image = true,
+        .payload = Record::Payload::image,
         .image_info = vk::DescriptorImageInfo{
             .sampler = sampler.handle(),
             .imageView = image.view(),
@@ -312,7 +375,7 @@ DescriptorSetWriter& DescriptorSetWriter::write_storage_image(uint32_t binding,
         .binding = binding,
         .array_element = array_element,
         .type = vk::DescriptorType::eStorageImage,
-        .is_image = true,
+        .payload = Record::Payload::image,
         .image_info = vk::DescriptorImageInfo{
             .sampler = nullptr,
             .imageView = image.view(),
@@ -322,12 +385,78 @@ DescriptorSetWriter& DescriptorSetWriter::write_storage_image(uint32_t binding,
     return *this;
 }
 
+DescriptorSetWriter& DescriptorSetWriter::write_image_record(uint32_t binding,
+                                                             vk::DescriptorType type,
+                                                             const vk::DescriptorImageInfo& info,
+                                                             uint32_t array_element) {
+    records_.push_back(Record{
+        .binding = binding,
+        .array_element = array_element,
+        .type = type,
+        .payload = Record::Payload::image,
+        .image_info = info,
+    });
+    return *this;
+}
+
+DescriptorSetWriter& DescriptorSetWriter::write_sampler(uint32_t binding,
+                                                        const Sampler& sampler,
+                                                        uint32_t array_element) {
+    return write_image_record(binding, vk::DescriptorType::eSampler,
+                              vk::DescriptorImageInfo{.sampler = sampler.handle()}, array_element);
+}
+
+DescriptorSetWriter& DescriptorSetWriter::write_sampled_image(uint32_t binding,
+                                                              const Image& image,
+                                                              vk::ImageLayout layout,
+                                                              uint32_t array_element) {
+    return write_image_record(
+        binding, vk::DescriptorType::eSampledImage,
+        vk::DescriptorImageInfo{.imageView = image.view(), .imageLayout = layout}, array_element);
+}
+
+DescriptorSetWriter& DescriptorSetWriter::write_input_attachment(uint32_t binding,
+                                                                 const Image& image,
+                                                                 vk::ImageLayout layout,
+                                                                 uint32_t array_element) {
+    return write_image_record(
+        binding, vk::DescriptorType::eInputAttachment,
+        vk::DescriptorImageInfo{.imageView = image.view(), .imageLayout = layout}, array_element);
+}
+
+DescriptorSetWriter& DescriptorSetWriter::write_texel_buffer(uint32_t binding,
+                                                             const BufferView& view,
+                                                             vk::DescriptorType type,
+                                                             uint32_t array_element) {
+    records_.push_back(Record{
+        .binding = binding,
+        .array_element = array_element,
+        .type = type,
+        .payload = Record::Payload::texel_buffer,
+        .texel_view = view.handle(),
+    });
+    return *this;
+}
+
+DescriptorSetWriter& DescriptorSetWriter::write_uniform_texel_buffer(uint32_t binding,
+                                                                     const BufferView& view,
+                                                                     uint32_t array_element) {
+    return write_texel_buffer(binding, view, vk::DescriptorType::eUniformTexelBuffer, array_element);
+}
+
+DescriptorSetWriter& DescriptorSetWriter::write_storage_texel_buffer(uint32_t binding,
+                                                                     const BufferView& view,
+                                                                     uint32_t array_element) {
+    return write_texel_buffer(binding, view, vk::DescriptorType::eStorageTexelBuffer, array_element);
+}
+
 void DescriptorSetWriter::flush() {
     if (records_.empty())
         return;
 
     std::vector<vk::DescriptorBufferInfo> buffer_infos(records_.size());
     std::vector<vk::DescriptorImageInfo> image_infos(records_.size());
+    std::vector<vk::BufferView> texel_views(records_.size());
     std::vector<vk::WriteDescriptorSet> writes;
     writes.reserve(records_.size());
 
@@ -341,12 +470,19 @@ void DescriptorSetWriter::flush() {
             .descriptorType = record.type,
         };
 
-        if (record.is_image) {
-            image_infos[i] = record.image_info;
-            write.pImageInfo = &image_infos[i];
-        } else {
-            buffer_infos[i] = record.buffer_info;
-            write.pBufferInfo = &buffer_infos[i];
+        switch (record.payload) {
+            case Record::Payload::buffer:
+                buffer_infos[i] = record.buffer_info;
+                write.pBufferInfo = &buffer_infos[i];
+                break;
+            case Record::Payload::image:
+                image_infos[i] = record.image_info;
+                write.pImageInfo = &image_infos[i];
+                break;
+            case Record::Payload::texel_buffer:
+                texel_views[i] = record.texel_view;
+                write.pTexelBufferView = &texel_views[i];
+                break;
         }
 
         writes.push_back(write);

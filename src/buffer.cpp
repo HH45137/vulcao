@@ -146,4 +146,52 @@ void Buffer::destroy() {
     host_visible_ = false;
 }
 
+BufferView::~BufferView() {
+    destroy();
+}
+
+BufferView::BufferView(BufferView&& other) noexcept
+    : device_(std::exchange(other.device_, vk::Device{})),
+      view_(std::exchange(other.view_, vk::BufferView{})) {}
+
+BufferView& BufferView::operator=(BufferView&& other) noexcept {
+    if (this != &other) {
+        destroy();
+        device_ = std::exchange(other.device_, vk::Device{});
+        view_ = std::exchange(other.view_, vk::BufferView{});
+    }
+    return *this;
+}
+
+BufferView BufferView::create(vk::Device device,
+                              const Buffer& buffer,
+                              vk::Format format,
+                              vk::DeviceSize offset,
+                              vk::DeviceSize range) {
+    if (!buffer.valid())
+        throw std::runtime_error("BufferView::create: invalid buffer");
+    if (!(buffer.usage() & (vk::BufferUsageFlagBits::eUniformTexelBuffer |
+                            vk::BufferUsageFlagBits::eStorageTexelBuffer)))
+        throw std::runtime_error(
+            "BufferView::create: buffer requires UniformTexelBuffer or StorageTexelBuffer usage");
+
+    BufferView view;
+    view.device_ = device;
+    view.view_ = device.createBufferView(vk::BufferViewCreateInfo{
+        .buffer = buffer.handle(),
+        .format = format,
+        .offset = offset,
+        .range = range,
+    });
+    return view;
+}
+
+void BufferView::destroy() {
+    if (view_)
+        device_.destroyBufferView(view_);
+
+    device_ = nullptr;
+    view_ = nullptr;
+}
+
 }

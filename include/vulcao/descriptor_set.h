@@ -11,6 +11,7 @@
 namespace vulcao {
 
 class Buffer;
+class BufferView;
 class DescriptorSet;
 class DescriptorSetWriter;
 class Image;
@@ -244,9 +245,57 @@ public:
                                        const Image& image,
                                        vk::ImageLayout layout = vk::ImageLayout::eGeneral) const;
 
+    /// @brief Writes a standalone sampler descriptor.
+    /// @param binding Binding index.
+    /// @param sampler Sampler to bind.
+    /// @return This descriptor set.
+    const DescriptorSet& write_sampler(uint32_t binding, const Sampler& sampler) const;
+
+    /// @brief Writes a sampled image descriptor, separate from its sampler.
+    /// @param binding Binding index.
+    /// @param image Image to bind.
+    /// @param layout Layout the image is sampled in.
+    /// @return This descriptor set.
+    const DescriptorSet& write_sampled_image(
+        uint32_t binding,
+        const Image& image,
+        vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal) const;
+
+    /// @brief Writes an input attachment descriptor.
+    /// @param binding Binding index.
+    /// @param image Image to bind.
+    /// @param layout Layout the image is read in.
+    /// @return This descriptor set.
+    const DescriptorSet& write_input_attachment(
+        uint32_t binding,
+        const Image& image,
+        vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal) const;
+
+    /// @brief Writes a uniform texel buffer descriptor.
+    /// @param binding Binding index.
+    /// @param view Texel buffer view to bind.
+    /// @return This descriptor set.
+    const DescriptorSet& write_uniform_texel_buffer(uint32_t binding, const BufferView& view) const;
+
+    /// @brief Writes a storage texel buffer descriptor.
+    /// @param binding Binding index.
+    /// @param view Texel buffer view to bind.
+    /// @return This descriptor set.
+    const DescriptorSet& write_storage_texel_buffer(uint32_t binding, const BufferView& view) const;
+
 private:
     friend class DescriptorPool;
     friend class DescriptorSetWriter;
+
+    /// @brief Writes an image-info based descriptor of an arbitrary type.
+    const DescriptorSet& write_image_descriptor(uint32_t binding,
+                                                const vk::DescriptorImageInfo& info,
+                                                vk::DescriptorType type) const;
+
+    /// @brief Writes a texel buffer descriptor of an arbitrary type.
+    const DescriptorSet& write_texel_buffer(uint32_t binding,
+                                            const BufferView& view,
+                                            vk::DescriptorType type) const;
 
     vk::Device device_;
     vk::DescriptorSet set_;
@@ -301,6 +350,35 @@ public:
                                              vk::ImageLayout layout = vk::ImageLayout::eGeneral,
                                              uint32_t array_element = 0);
 
+    /// @brief Queues a standalone sampler descriptor write.
+    DescriptorSetWriter& write_sampler(uint32_t binding,
+                                       const Sampler& sampler,
+                                       uint32_t array_element = 0);
+
+    /// @brief Queues a sampled image descriptor write, separate from its sampler.
+    DescriptorSetWriter& write_sampled_image(
+        uint32_t binding,
+        const Image& image,
+        vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+        uint32_t array_element = 0);
+
+    /// @brief Queues an input attachment descriptor write.
+    DescriptorSetWriter& write_input_attachment(
+        uint32_t binding,
+        const Image& image,
+        vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+        uint32_t array_element = 0);
+
+    /// @brief Queues a uniform texel buffer descriptor write.
+    DescriptorSetWriter& write_uniform_texel_buffer(uint32_t binding,
+                                                    const BufferView& view,
+                                                    uint32_t array_element = 0);
+
+    /// @brief Queues a storage texel buffer descriptor write.
+    DescriptorSetWriter& write_storage_texel_buffer(uint32_t binding,
+                                                    const BufferView& view,
+                                                    uint32_t array_element = 0);
+
     /// @brief Applies all queued writes in one update and clears them.
     void flush();
 
@@ -309,13 +387,28 @@ public:
 
 private:
     struct Record {
+        enum class Payload { buffer, image, texel_buffer };
+
         uint32_t binding = 0;
         uint32_t array_element = 0;
         vk::DescriptorType type = vk::DescriptorType::eUniformBuffer;
-        bool is_image = false;
+        Payload payload = Payload::buffer;
         vk::DescriptorBufferInfo buffer_info{};
         vk::DescriptorImageInfo image_info{};
+        vk::BufferView texel_view{};
     };
+
+    /// @brief Queues an image-info based descriptor write of an arbitrary type.
+    DescriptorSetWriter& write_image_record(uint32_t binding,
+                                            vk::DescriptorType type,
+                                            const vk::DescriptorImageInfo& info,
+                                            uint32_t array_element);
+
+    /// @brief Queues a texel buffer descriptor write of an arbitrary type.
+    DescriptorSetWriter& write_texel_buffer(uint32_t binding,
+                                            const BufferView& view,
+                                            vk::DescriptorType type,
+                                            uint32_t array_element);
 
     vk::Device device_;
     vk::DescriptorSet set_;

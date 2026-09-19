@@ -172,4 +172,57 @@ private:
     bool host_visible_ = false;
 };
 
+/// @brief RAII wrapper around a Vulkan buffer view, used for texel buffers.
+class BufferView {
+public:
+    /// @brief Creates an empty buffer view.
+    BufferView() = default;
+
+    /// @brief Destroys the buffer view.
+    ~BufferView();
+
+    /// @brief Not copyable.
+    BufferView(const BufferView&) = delete;
+    BufferView& operator=(const BufferView&) = delete;
+
+    /// @brief Moves the buffer view, leaving the source empty.
+    BufferView(BufferView&& other) noexcept;
+
+    /// @brief Move assignment. Destroys the current buffer view first.
+    BufferView& operator=(BufferView&& other) noexcept;
+
+    /// @brief Creates a view of a buffer in a texel format.
+    ///
+    /// The buffer must have been created with UniformTexelBuffer or
+    /// StorageTexelBuffer usage and must outlive the view.
+    /// @param device Device that creates the view.
+    /// @param buffer Buffer to view.
+    /// @param format Format the texels are interpreted as.
+    /// @param offset Byte offset of the viewed range.
+    /// @param range Byte size of the viewed range, or VK_WHOLE_SIZE.
+    /// @return The created buffer view.
+    /// @throws std::runtime_error if the buffer is invalid or lacks texel buffer usage.
+    static BufferView create(vk::Device device,
+                             const Buffer& buffer,
+                             vk::Format format,
+                             vk::DeviceSize offset = 0,
+                             vk::DeviceSize range = VK_WHOLE_SIZE);
+
+    /// @brief Returns true if the view holds a valid handle.
+    bool valid() const { return static_cast<bool>(view_); }
+
+    /// @brief Returns true if the view holds a valid handle.
+    explicit operator bool() const { return valid(); }
+
+    /// @brief Returns the raw Vulkan buffer view handle.
+    vk::BufferView handle() const { return view_; }
+
+    /// @brief Destroys the buffer view and resets the wrapper.
+    void destroy();
+
+private:
+    vk::Device device_;
+    vk::BufferView view_;
+};
+
 }

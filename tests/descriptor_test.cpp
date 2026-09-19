@@ -370,3 +370,96 @@ TEST_CASE("descriptor pool create_for_bindings sizes the pool from the bindings"
         vulcao::DescriptorSetLayout::create(context.device(), no_bindings);
     CHECK(empty_pool.allocate(empty_layout).valid());
 }
+
+TEST_CASE("texel buffer views and separate image descriptors write cleanly") {
+    VULCAO_REQUIRE_DEVICE();
+
+    const vulcao::test::LogLevelGuard log_level_guard;
+    vulcao::set_log_level(vulcao::LogLevel::warning);
+
+    vulcao::test::ErrorCapture capture;
+
+    vulcao::ContextInfo info;
+    info.headless = true;
+    info.validation = true;
+
+    vulcao::Context context{info};
+    context.initialize();
+
+    // A texel buffer view needs texel usage on the viewed buffer.
+    vulcao::Buffer texels = vulcao::Buffer::create(
+        context.allocator(), 16 * sizeof(float),
+        vk::BufferUsageFlagBits::eStorageTexelBuffer |
+            vk::BufferUsageFlagBits::eUniformTexelBuffer);
+    const vulcao::BufferView view =
+        vulcao::BufferView::create(context.device(), texels, vk::Format::eR32Sfloat);
+    REQUIRE(view.valid());
+
+    vulcao::Buffer not_texels = vulcao::Buffer::create(
+        context.allocator(), 64, vk::BufferUsageFlagBits::eVertexBuffer);
+    CHECK_THROWS_AS(vulcao::BufferView::create(context.device(), not_texels,
+                                               vk::Format::eR32Sfloat),
+                    std::runtime_error);
+    CHECK_THROWS_AS(vulcao::BufferView::create(context.device(), vulcao::Buffer{},
+                                               vk::Format::eR32Sfloat),
+                    std::runtime_error);
+
+    constexpr uint32_t sampler_binding = 0;
+    constexpr uint32_t sampled_binding = 1;
+    constexpr uint32_t input_binding = 2;
+    constexpr uint32_t uniform_texel_binding = 3;
+    constexpr uint32_t storage_texel_binding = 4;
+
+    const std::array<DescriptorSetLayoutBinding, 5> bindings{{
+        DescriptorSetLayoutBinding{.binding = sampler_binding,
+                                   .descriptorType = DescriptorType::eSampler,
+                                   .descriptorCount = 1,
+                                   .stageFlags = ShaderStageFlagBits::eFragment},
+        DescriptorSetLayoutBinding{.binding = sampled_binding,
+                                   .descriptorType = DescriptorType::eSampledImage,
+                                   .descriptorCount = 1,
+                                   .stageFlags = ShaderStageFlagBits::eFragment},
+        DescriptorSetLayoutBinding{.binding = input_binding,
+                                   .descriptorType = DescriptorType::eInputAttachment,
+                                   .descriptorCount = 1,
+                                   .stageFlags = ShaderStageFlagBits::eFragment},
+        DescriptorSetLayoutBinding{.binding = uniform_texel_binding,
+                                   .descriptorType = DescriptorType::eUniformTexelBuffer,
+                                   .descriptorCount = 1,
+                                   .stageFlags = ShaderStageFlagBits::eFragment},
+        DescriptorSetLayoutBinding{.binding = storage_texel_binding,
+                                   .descriptorType = DescriptorType::eStorageTexelBuffer,
+                                   .descriptorCount = 1,
+                                   .stageFlags = ShaderStageFlagBits::eCompute},
+    }};
+
+    const vulcao::DescriptorSetLayout layout =
+        vulcao::DescriptorSetLayout::create(context.device(), bindings);
+    vulcao::DescriptorPool pool =
+        vulcao::DescriptorPool::create_for_bindings(context.device(), bindings, 1);
+
+    const vulcao::Sampler sampler = vulcao::Sampler::linear(context.device());
+    vulcao::Image image = vulcao::Image::create_2d(
+        context.allocator(), vk::Extent2D{4, 4}, vk::Format::eR8G8B8A8Unorm,
+        vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eInputAttachment);
+
+    const vulcao::DescriptorSet set = pool.allocate(layout);
+    CHECK_NOTHROW(set.write_sampler(sampler_binding, sampler));
+    CHECK_NOTHROW(set.write_sampled_image(sampled_binding, image));
+    CHECK_NOTHROW(set.write_input_attachment(input_binding, image));
+    CHECK_NOTHROW(set.write_uniform_texel_buffer(uniform_texel_binding, view));
+    CHECK_NOTHROW(set.write_storage_texel_buffer(storage_texel_binding, view));
+
+    // The batching writer covers the same descriptor kinds in one update.
+    vulcao::DescriptorSetWriter writer{set};
+    writer.write_sampler(sampler_binding, sampler)
+        .write_sampled_image(sampled_binding, image)
+        .write_input_attachment(input_binding, image)
+        .write_uniform_texel_buffer(uniform_texel_binding, view)
+        .write_storage_texel_buffer(storage_texel_binding, view);
+    CHECK_NOTHROW(writer.flush());
+
+    for (const std::string& error : capture.errors)
+        MESSAGE("logged error: ", error);
+    CHECK(capture.errors.empty());
+}
