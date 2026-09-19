@@ -83,7 +83,7 @@ jobs:
           slangc="$(find "$HOME/slang" -type f -name slangc -print -quit 2>/dev/null || true)"
           if [ -z "$slangc" ]; then
             mkdir -p "$HOME/slang"
-            curl -sSL --retry 3 -o slang.tar.gz "$url"
+            curl -fsSL --retry 3 -o slang.tar.gz "$url"
             tar -xzf slang.tar.gz -C "$HOME/slang"
             slangc="$(find "$HOME/slang" -type f -name slangc -print -quit)"
           fi
@@ -160,7 +160,7 @@ jobs:
           slangc="$(find "$HOME/slang" -type f -name slangc -print -quit 2>/dev/null || true)"
           if [ -z "$slangc" ]; then
             mkdir -p "$HOME/slang"
-            curl -sSL --retry 3 -o slang.tar.gz "$url"
+            curl -fsSL --retry 3 -o slang.tar.gz "$url"
             tar -xzf slang.tar.gz -C "$HOME/slang"
             slangc="$(find "$HOME/slang" -type f -name slangc -print -quit)"
           fi
@@ -206,17 +206,17 @@ jobs:
       - name: Cache the Vulkan SDK installer
         uses: actions/cache@v5
         with:
-          path: VulkanSDK-*.exe
+          path: vulkan-sdk.exe
           key: vulkan-sdk-installer-${{ env.VULKAN_SDK_VERSION }}-windows
 
       - name: Install the Vulkan SDK
         shell: bash
         run: |
-          if ! ls VulkanSDK-*.exe > /dev/null 2>&1; then
-            curl -sSL --retry 3 -o "VulkanSDK-${VULKAN_SDK_VERSION}-Installer.exe" \
-              "https://sdk.lunarg.com/sdk/download/${VULKAN_SDK_VERSION}/windows/VulkanSDK-${VULKAN_SDK_VERSION}-Installer.exe"
+          if [ ! -f vulkan-sdk.exe ]; then
+            curl -fsSL --retry 3 -o vulkan-sdk.exe \
+              "https://sdk.lunarg.com/sdk/download/${VULKAN_SDK_VERSION}/windows/vulkan-sdk.exe"
           fi
-          ./VulkanSDK-${VULKAN_SDK_VERSION}-Installer.exe --accept-licenses --default --root "$PWD/VULKAN_SDK" /S
+          ./vulkan-sdk.exe --accept-licenses --default --root "$PWD/VULKAN_SDK" /S
           lib="$(find "$PWD/VULKAN_SDK" -name vulkan-1.lib -print -quit)"
           if [ -z "$lib" ]; then
             echo "installer produced no vulkan-1.lib under $PWD/VULKAN_SDK" >&2
@@ -237,7 +237,7 @@ jobs:
         run: |
           if ! command -v slangc > /dev/null 2>&1; then
             echo "slangc not in the SDK; falling back to the Slang release" >&2
-            curl -sSL --retry 3 -o slang.zip \
+            curl -fsSL --retry 3 -o slang.zip \
               "https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-windows-x86_64.zip"
             tar -xf slang.zip -C "$HOME/slang"
             slangc="$(find "$HOME/slang" -name slangc.exe -print -quit)"
@@ -255,7 +255,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          curl -sSL --retry 3 -o mesa.7z \
+          curl -fsSL --retry 3 -o mesa.7z \
             "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z"
           7z x -y -omesa mesa.7z > /dev/null
           icd="$(find mesa -name 'lvp_icd*.json' -path '*x64*' -print 2>/dev/null | head -n1)"
