@@ -11,12 +11,14 @@ layouts from SPIR-V reflection.
   compute/transfer queues. Created headless (`ContextInfo::headless`) it skips
   the surface and swapchain for compute-only or offscreen work.
 - Resources: VMA-backed `Allocator`, `Buffer` (including `create_with_data`, the
-  create-and-upload pair in one call), `Image` (2D/depth factories, mipmap
-  generation), `Sampler` and `CommandPool`.
+  create-and-upload pair in one call), `BufferView` for texel buffers, `Image`
+  (2D/depth factories, mipmap generation), `Sampler` and `CommandPool`.
 - Transfer: staging-backed `upload`/`download` for buffers and images, with the
   full `vk::BufferImageCopy` region exposed for row-pitched data.
 - Synchronization: `Fence`, binary and timeline `Semaphore`, `QueryPool` and a
-  `FrameManager` that owns frames in flight, swapchain acquire and present.
+  `FrameManager` that owns frames in flight, swapchain acquire and present,
+  plus per-slot `DeletionQueue`s: `defer_destroy` retires a resource once the
+  GPU is done with the frames that referenced it.
 - Recording: `CommandBuffer` with layout transitions (including swapchain
   `transition_to_render`/`transition_to_present` helpers), copies, mipmaps,
   draws, dispatches, queries, dynamic state, debug labels and queue family
@@ -24,7 +26,8 @@ layouts from SPIR-V reflection.
   `depth_attachment` builders and a full-extent `begin_rendering` convenience.
 - Descriptors: `DescriptorPool::create_for_bindings` sizes a pool from a
   reflected set's bindings (e.g. one set per frame in flight) without
-  hand-counted pool sizes.
+  hand-counted pool sizes. Writes cover buffers, combined and separate
+  image/sampler pairs, storage and input attachments, and texel buffers.
 - Pipelines: `ShaderModule` with SPIR-V reflection, `DescriptorSetLayout/Pool/Set`
   with a batching writer and layout cache, `PipelineLayout`, `Pipeline` with
   graphics/compute factories, specialization constants and `PipelineCache`.
