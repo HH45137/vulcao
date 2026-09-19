@@ -1,6 +1,7 @@
 add_executable(vulcao_tests
     barrier_test.cpp
     context_test.cpp
+    deletion_queue_test.cpp
     descriptor_test.cpp
     headless_test.cpp
     image_test.cpp

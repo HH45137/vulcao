@@ -66,6 +66,10 @@ Frame FrameManager::begin_frame() {
     Slot& slot = slots_[next_slot_];
     slot.in_flight_fence.wait();
 
+    // The slot's previous submission just completed, so resources retired
+    // while it (or any earlier frame) was recording are no longer referenced.
+    slot.deletion_queue.flush();
+
     uint32_t image_index = 0;
     const vk::ResultValue<uint32_t> acquired = device_.acquireNextImageKHR(
         context_.swapchain(), UINT64_MAX, slot.image_available.handle());

@@ -1,12 +1,14 @@
 #pragma once
 
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include <vulkan/vulkan.hpp>
 
 #include "vulcao/command_buffer.h"
 #include "vulcao/command_pool.h"
+#include "vulcao/deletion_queue.h"
 #include "vulcao/fence.h"
 #include "vulcao/semaphore.h"
 
@@ -79,6 +81,30 @@ public:
     /// @param frame Frame returned by begin_frame.
     void end_frame(Frame& frame);
 
+    /// @brief Defers destruction of a resource until the GPU is done with it.
+    ///
+    /// The resource is moved into the deletion queue of the frame's slot and
+    /// destroyed at the slot's next begin_frame(), after the fence wait: by
+    /// then every submission recorded so far has completed, so it is safe to
+    /// release a resource that earlier frames still referenced. Typical use is
+    /// replacing a per-frame buffer or image while it may still be read by an
+    /// in-flight frame.
+    /// @tparam T Move-only resource type (Buffer, Image, ...).
+    /// @param frame Frame the resource is retired from.
+    /// @param resource Resource to destroy later.
+    template <typename T>
+    void defer_destroy(Frame& frame, T&& resource) {
+        slots_.at(frame.slot).deletion_queue.push(std::forward<T>(resource));
+    }
+
+    /// @brief Defers destruction of a resource to the most recently acquired slot.
+    /// @tparam T Move-only resource type (Buffer, Image, ...).
+    /// @param resource Resource to destroy later.
+    template <typename T>
+    void defer_destroy(T&& resource) {
+        slots_.at(current_slot_).deletion_queue.push(std::forward<T>(resource));
+    }
+
     /// @brief Presents the frame.
     /// @param frame Frame returned by begin_frame.
     /// @return True if the image was presented, false if the swapchain should be recreated.
@@ -105,6 +131,9 @@ private:
         CommandBuffer command_buffer;
         Fence in_flight_fence;
         Semaphore image_available;
+        /// @brief Resources retired while this slot was recording, destroyed
+        ///        after the slot's fence signals.
+        DeletionQueue deletion_queue;
     };
 
     /// @brief Creates the per-frame command buffers, fences and semaphores.
