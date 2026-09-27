@@ -58,7 +58,8 @@ int main() {
         // The pool is sized from the reflected bindings: set 0 carries three
         // storage buffers (a, b, c), so a hand-counted single-storage-buffer
         // pool would run out of pool memory on allocation.
-        vulcao::DescriptorPool pool = vulcao::DescriptorPool::create_for_bindings(context.device(), shader.reflection().bindings_for_set(0), 1);
+        vulcao::DescriptorPool pool = vulcao::DescriptorPool::create_for_bindings(
+            context.device(), shader.reflection().bindings_for_set(0), 1);
 
         /* ----------------- Matrix ----------------- */
 
