@@ -8,3 +8,4 @@ docs/generated/
 /.idea
 /samples/07_mlp/models/data
 *.pth
+/samples/07_mlp/models/weight
