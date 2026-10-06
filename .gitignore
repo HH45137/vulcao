@@ -6,3 +6,5 @@ docs/generated/
 .workbuddy-ai/
 .workbuddy/
 /.idea
+/samples/07_mlp/models/data
+*.pth
