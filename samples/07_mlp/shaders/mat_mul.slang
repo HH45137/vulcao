@@ -13,7 +13,7 @@ struct PushParams
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
-void mlp_inference(uint3 tid : SV_DispatchThreadID)
+void mat_mul(uint3 tid : SV_DispatchThreadID)
 {
     const uint DIM = params.mat_dim;
 

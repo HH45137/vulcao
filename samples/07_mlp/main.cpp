@@ -4,6 +4,7 @@
 #include <iostream>
 #include <span>
 #include <vector>
+#include <fstream>
 
 #include "vulcao/buffer.h"
 #include "vulcao/command_buffer.h"
@@ -15,27 +16,100 @@
 #include "vulcao/shader_module.h"
 
 #include <glm/glm.hpp>
+#include <nlohmann/json.hpp>
 
 #ifndef VULCAO_SHADER_DIR
 #define VULCAO_SHADER_DIR "shaders"
 #endif
 
-namespace {
+namespace MLP_INFERENCE {
+
+namespace DEVICE {
 
 struct PushParams {
     glm::uint32 mat_dim;
 };
 
+}
+
+namespace HOST {
 constexpr uint32_t MAT_DIM = 2;
 constexpr uint32_t MAT_ITEM_COUNT = MAT_DIM * MAT_DIM;
 constexpr uint32_t WORKGROUP_DIM = 8;
 constexpr uint32_t WORKGROUP_SIZE = WORKGROUP_DIM * WORKGROUP_DIM * 1;
 constexpr uint32_t DISPATCHED_NUM = (MAT_DIM + (WORKGROUP_DIM - 1)) / WORKGROUP_DIM;
 
+
+enum act_func_e : glm::int32 {
+    relu = 1,
+    sine,
+    sigmoid,
+};
+
+struct linear_layer_s {
+    glm::int32 in_dim{};
+    glm::int32 out_dim{};
+    act_func_e act_func{relu};
+    std::vector<float> weight_data{};
+    std::vector<float> bias_data{};
+};
+
+struct coordinate_mlp_s {
+    glm::ivec2 img_size{};
+
+    std::vector<float> frequencies_data{};
+
+    linear_layer_s in_layer;
+    std::vector<linear_layer_s> hidden_layers{};
+    linear_layer_s out_layer;
+};
+
+
+static act_func_e get_act_func_type(std::string str) {
+    if (str == "relu") {
+        return relu;
+    } else if (str == "sigmoid") {
+        return sigmoid;
+    }
 }
 
-int main() {
+static bool load_model_from_json(coordinate_mlp_s& ref_model, const std::string& json_path) {
+    using json = nlohmann::json;
+
+    std::ifstream json_file_handle(json_path.c_str());
+    json json_data = json::parse(json_file_handle);
+
+    ref_model.img_size.x = json_data["width"];
+    ref_model.img_size.y = json_data["height"];
+
+    std::string act_func_str = json_data["activation"];
+    ref_model.in_layer.act_func = get_act_func_type(act_func_str);
+
+    // TODO
+
+    return true;
+}
+
+}
+
+}
+
+int main(int argc, char* argv[]) {
+    using namespace MLP_INFERENCE;
+    using namespace MLP_INFERENCE::HOST;
+
     try {
+        /* ----------------- Prepare ----------------- */
+
+        coordinate_mlp_s mlp_model{};
+        {
+            std::string model_weight_path = "neural_texture.json";
+            if (argc >= 2) {
+                model_weight_path = std::string(argv[1]);
+            }
+            bool result = load_model_from_json(mlp_model, model_weight_path);
+        }
+
         // A compute pass needs no surface, so the context is created headless and
         // this sample runs on a machine without a display.
         vulcao::Context context{{.app_name = "07_mlp", .headless = true}};
@@ -53,7 +127,10 @@ int main() {
             vulcao::PipelineLayout::create_from_reflection(
                 context.device(), std::span(&shader.reflection(), 1));
         const vulcao::Pipeline pipeline =
-            vulcao::Pipeline::create_compute(context.device(), pipeline_layout, shader, "compMain");
+            vulcao::Pipeline::create_compute(context.device(),
+                                             pipeline_layout,
+                                             shader,
+                                             "mlp_inference");
 
         // The pool is sized from the reflected bindings: set 0 carries three
         // storage buffers (a, b, c), so a hand-counted single-storage-buffer
@@ -70,27 +147,6 @@ int main() {
             mat_value_a[i] = 0.0f;
             mat_value_b[i] = 0.0f;
             mat_value_c[i] = 0.0f;
-        }
-
-        // Set test values
-        {
-            mat_value_a[0] = 1;
-            mat_value_a[1] = 2;
-            mat_value_a[2] = 3;
-            mat_value_a[3] = 4;
-
-            mat_value_b[0] = 5;
-            mat_value_b[1] = 6;
-            mat_value_b[2] = 7;
-            mat_value_b[3] = 8;
-
-            // True result
-            /*
-            mat_value_c[0] = 19;
-            mat_value_c[1] = 22;
-            mat_value_c[2] = 43;
-            mat_value_c[3] = 50;
-            */
         }
 
         constexpr vk::DeviceSize mat_bytes = MAT_ITEM_COUNT * sizeof(float);
@@ -150,7 +206,7 @@ int main() {
                 cmd.push_constants(pipeline_layout.handle(),
                                    vk::ShaderStageFlagBits::eCompute,
                                    0,
-                                   PushParams{MAT_DIM});
+                                   DEVICE::PushParams{MAT_DIM});
             }
 
             cmd.bind_pipeline(pipeline);
